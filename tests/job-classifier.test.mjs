@@ -9,6 +9,9 @@ const {withSyncSignal}=loadLocalTypeScript('lib/sync-control.ts');
 const {jobQuery}=loadLocalTypeScript('lib/job-query.ts');
 const {estimateAiCost}=loadLocalTypeScript('lib/ai-cost.ts');
 const {AI_POLICY}=loadLocalTypeScript('lib/classification-types.ts');
+const {readAnalysis,jobCategories}=loadLocalTypeScript('lib/classification-types.ts');
+const {localShortlist}=loadLocalTypeScript('lib/local-shortlist.ts');
+const {confirmedUsSponsorship}=loadLocalTypeScript('lib/sponsorship.ts');
 const job={externalId:'1',company:'Example',title:'Backend Engineer - New Grad',location:'New York, United States',canonicalUrl:'https://example.invalid/1',description:'New Grad engineering role. Build backend services using Python and PostgreSQL. Location: United States.',postedAt:new Date().toISOString()};
 const decision={accepted:true,categories:['backend_distributed'],careerLevel:'new_grad',countries:['US'],techStack:[{name:'Python',evidence:'using Python and PostgreSQL'}],roleEvidence:'backend services',levelEvidence:'New Grad',locationEvidence:'United States',reason:'美国后端应届岗位'};
 function database(){
@@ -34,6 +37,61 @@ test('Cache identity changes with model, JD, title and location',async()=>{
  const key=await classificationKey(job,config.model);assert.equal(await classificationKey({...job,canonicalUrl:'another URL'},config.model),key);
  for(const changed of [{...job,description:job.description+' Extra requirement.'},{...job,location:'Beijing, China'},{...job,title:'Junior Backend'}])assert.notEqual(await classificationKey(changed,config.model),key);
  assert.notEqual(await classificationKey(job,'deepseek-v4-pro'),key);
+});
+
+test('Quant, data science, solutions, forward deployment and adjacent technical roles reach AI instead of being pre-rejected',()=>{
+ for(const title of ['Quant Developer Intern','Quantitative Researcher New Grad','Data Scientist Intern','Marketing Data Scientist Intern','Data Analyst Junior','Business Intelligence Analyst Intern','Applied Scientist New Grad','Solutions Architect New Grad','Solution Architect Intern','Solutions Engineer Junior','Sales Engineer Intern','Forward Deployed Engineer New Grad','Forward Deployment Engineer Intern','Implementation Engineer Junior','Frontend Engineer Intern','Software Test Engineer New Grad','量化开发实习生','数据科学家（校招）','解决方案架构师（应届）']){
+  const input={...job,title,description:'Requirements: 0-2 years of experience. Technical customer delivery, Python and statistical analysis.'};
+  assert.equal(ruleRejection(input),null,title);assert.equal(localShortlist(input).reason,null,title);
+ }
+ for(const category of ['quant_development','data_science','solutions_architect','forward_deployed','software_engineering','related_technical']){
+  assert(Object.hasOwn(jobCategories,category));assert.equal(parseDecision({...decision,categories:[category]},job).accepted,true);
+ }
+ assert(ruleRejection({...job,title:'Senior Solutions Architect'}));assert(localShortlist({...job,title:'Data Scientist',description:'Requirements: minimum 5 years of professional experience.'}).reason);
+ assert(ruleRejection({...job,title:'Forward Deployed Engineer Intern',location:'London, United Kingdom'}));
+});
+
+test('Expanded prompt favors related technical roles while keeping career, country and evidence rules',async t=>{
+ const {db,sqlite}=database();let calls=0;t.mock.method(globalThis,'fetch',async(_url,init)=>{
+  calls++;const prompt=JSON.parse(init.body).messages[0].content;
+  for(const text of ['Favor recall','quant_development','data_science','solutions_architect','forward_deployed','related_technical','usSponsorship','OPT/CPT','internship, new_grad or junior'])assert(prompt.includes(text),text);
+  assert(!prompt.includes('data analyst/science-only'));return response(decision);
+ });
+ try{assert.equal((await createJobClassifier(db,config).evaluate({...job,title:'Solutions Architect - New Grad'})).accepted,true);assert.equal(calls,1);}finally{sqlite.close();}
+});
+
+test('Old rejection caches are reconsidered; valid old approvals avoid another paid request',async t=>{
+ const {db,sqlite}=database();let calls=0;t.mock.method(globalThis,'fetch',async()=>{calls++;return response(decision);});
+ try{
+  const legacy=await classificationKey(job,config.model,null),current=await classificationKey(job,config.model);assert.notEqual(current,legacy);
+  const insert=sqlite.prepare('INSERT OR REPLACE INTO job_evaluations(cache_key,decision_json,model,created_at,expires_at) VALUES(?,?,?,?,?)');
+  insert.run(legacy,JSON.stringify({accepted:false,reason:'Old strict role policy'}),config.model,new Date().toISOString(),'2099-01-01T00:00:00Z');
+  assert.equal((await createJobClassifier(db,config).evaluate(job)).accepted,true);assert.equal(calls,1);
+  sqlite.prepare('DELETE FROM job_evaluations WHERE cache_key=?').run(current);
+  insert.run(legacy,JSON.stringify(decision),config.model,new Date().toISOString(),'2099-01-01T00:00:00Z');
+  const classifier=createJobClassifier(db,config);assert.equal((await classifier.evaluate(job)).accepted,true);assert.equal(calls,1);assert.equal(classifier.metrics.cacheHits,1);
+ }finally{sqlite.close();}
+});
+
+test('US sponsorship annotations require an affirmative, verbatim role-specific visa statement',()=>{
+ for(const text of ['We offer visa sponsorship for this position.','H-1B visa sponsorship is available for this role.','We can sponsor an H1B visa for this position.','We sponsor work visas for this position.','本美国岗位提供工作签证赞助。']){
+  const sponsored={...job,description:job.description+'\n'+text};
+  const analysis=parseDecision({...decision,usSponsorship:{available:true,evidence:text}},sponsored);
+  assert.equal(analysis.usSponsorship?.available,true,text);assert.equal(analysis.usSponsorship.evidence,text);
+  assert.equal(readAnalysis(decision,sponsored.description,sponsored.location).usSponsorship?.available,true,'Already approved jobs can be annotated locally');
+ }
+ for(const text of ['We do not provide visa sponsorship.','Visa sponsorship is not available for this role.','Must work without visa sponsorship now or in the future.','OPT and CPT candidates are welcome.','We provide conference sponsorship.','Visa provides conference sponsorship.','The company previously sponsored H1B visas.','In the past we provided H1B visa sponsorship.','Visa sponsorship may be considered.','H1B visa sponsorship is available in our UK office.']){
+  const sponsored={...job,description:job.description+'\n'+text};
+  assert.equal(parseDecision({...decision,usSponsorship:{available:true,evidence:text}},sponsored).usSponsorship,undefined,text);
+ }
+ const text='We offer visa sponsorship for this position.';
+ assert.equal(confirmedUsSponsorship(text,['CN'],{available:true,evidence:text},'Beijing, China'),null);
+ assert.equal(confirmedUsSponsorship(text+'\nThis role does not provide visa sponsorship.',['US']),null);
+ assert.equal(confirmedUsSponsorship('Some other original text.',['US'],{available:true,evidence:text}),null);
+ assert.equal(confirmedUsSponsorship(text,['US'],null,'United States; United Kingdom'),null,'Mixed-country sponsorship needs explicit US scope');
+ assert(confirmedUsSponsorship('US positions offer H1B visa sponsorship.',['US'],null,'US; UK'));
+ assert.equal(parseDecision({...decision,usSponsorship:{available:true,evidence:'Invented sponsorship'}},job).accepted,true,'Invalid annotation must not reject a valid job');
+ assert.equal(readAnalysis({...decision,usSponsorship:{available:true,evidence:'Invented sponsorship'}},job.description,job.location).usSponsorship,undefined);
 });
 test('Concurrent duplicates and later hourly runs reuse persistent decisions and do not pay again',async t=>{
  const {db,sqlite}=database();let calls=0;

@@ -1,5 +1,5 @@
 import type { JobRecord } from "./job-types";
-export const SHORTLIST_VERSION = "engineering-early-career-v2";
+export const SHORTLIST_VERSION = "broad-technical-early-career-v3";
 
 function requiresSeniorExperience(description: string): boolean {
   const heading = /(?:minimum|basic|required) qualifications|(?:job )?requirements|what you(?:'|’)ll bring|what you bring|任职要求|岗位要求|职位要求|必备条件/ig;
@@ -25,21 +25,19 @@ function requiresSeniorExperience(description: string): boolean {
 
 export function localShortlist(job: JobRecord): { priority: number; reason: string | null } {
   const title = job.title, description = job.description;
-  const nonEngineering = /^(?:technical\s+)?(?:recruiter|account executive|sales (?:engineer|development|representative)|business development|customer (?:success|support)|product manager|project manager|program manager|marketing|graphic designer|accountant|financial analyst|mechanical engineer|electrical engineer|hardware engineer)\b|^(?:招聘|销售|市场|财务|行政|产品经理|项目经理|机械|电气)/i;
-  if (nonEngineering.test(title)) return { priority: 0, reason: "本地预筛：明确为目标工程岗位以外的职责" };
-  const otherRoles = /\b(?:recruiter|account executive|business development|sales development|(?:marketing|communications|social media) (?:intern|specialist|associate|analyst|coordinator)|(?:UX|UI|graphic|product) designer|accountant|financial analyst)\b|(?:市场营销|人力资源|招聘专员|财务|平面设计|视觉设计)/i;
-  const frontendOnly = /\b(?:front.end|frontend|mobile|iOS|Android)\b.*\b(?:engineer|developer)\b|\b(?:engineer|developer)\b.*\b(?:front.end|frontend|mobile|iOS|Android)\b|前端(?:开发)?工程师|客户端(?:开发)?工程师/i;
-  const mixedRole = /\b(?:full.stack|backend|back.end|distributed|platform|infrastructure|compiler|kernel)\b|全栈|后端|分布式|平台|基础架构|编译|内核/i;
-  const testingOnly = /^(?:QA\b|quality assurance|software (?:test|testing) engineer|hardware|electrical|mechanical)|^(?:测试工程师|测试开发工程师|软件测试|硬件|电气|机械)/i;
-  if (otherRoles.test(title) || (frontendOnly.test(title) || testingOnly.test(title)) && !mixedRole.test(title))
+  const relevantTitle = /\b(?:quant(?:itative)?|data (?:scien(?:ce|tist)|analy(?:st|tics)|engineer)|solutions? (?:architect|engineer)|forward[ -]?deploy(?:ed|ment)|software (?:engineer|developer))\b|量化|数据科学|数据分析|解决方案|前线部署/i;
+  const nonEngineering = /^(?:technical\s+)?(?:recruiter|account executive|sales (?:development|representative)|business development|product manager|project manager|program manager|marketing|graphic designer|accountant|financial analyst)\b|^(?:招聘|销售代表|市场|财务|行政|产品经理|项目经理)/i;
+  if (nonEngineering.test(title) && !relevantTitle.test(title)) return { priority: 0, reason: "本地预筛：明确为目标工程岗位以外的职责" };
+  const otherRoles = /\b(?:recruiter|account executive|business development|sales development|(?:marketing|communications|social media) (?:intern|specialist|associate|analyst|coordinator)|(?:UX|UI|graphic|product) designer|accountant)\b|(?:市场营销|人力资源|招聘专员|财务|平面设计|视觉设计)/i;
+  if (otherRoles.test(title) && !relevantTitle.test(title))
     return { priority: 0, reason: "本地预筛：职位标题明确属于非目标岗位" };
   if (requiresSeniorExperience(description)) return { priority: 0, reason: "本地预筛：必备条件明确要求最低 3 年以上经验" };
-  const engineering = /\b(?:software|backend|back.end|full.stack|distributed|AI|ML|LLM|machine learning|cloud|platform|infrastructure|data engineer|data engineering|inference|training|reinforcement learning|runtime|execution|compiler|kernel|CUDA|Triton|MLOps|DevOps|SRE|systems engineer|research engineer)\b|后端|全栈|分布式|人工智能|机器学习|大模型|云平台|数据工程|数据开发|基础架构|算法|推理|训练|编译|算子|内核|软件|研发|开发工程|运维/i;
-  if (!engineering.test(`${title}\n${description}`)) return { priority: 0, reason: "本地预筛：没有目标工程职责线索" };
+  const engineering = /\b(?:software|backend|back.end|full.stack|front.end|frontend|mobile|iOS|Android|SDET|QA|test automation|distributed|AI|ML|LLM|machine learning|cloud|platform|infrastructure|data (?:engineer|engineering|scien(?:ce|tist)|analy(?:st|tics|sis))|business intelligence|decision science|applied scientist|Python|SQL|programming|quant(?:itative)?|quant developer|trading (?:systems?|technology)|statistic(?:s|ian|al)|solutions? (?:architect|engineer|consultant)|forward[ -]?deploy(?:ed|ment)|deployment engineer|implementation engineer|integration engineer|technical (?:consultant|support|solutions)|sales engineer|customer engineer|inference|training|reinforcement learning|runtime|execution|compiler|kernel|CUDA|Triton|MLOps|DevOps|SRE|systems engineer|research (?:engineer|scientist))\b|后端|全栈|前端|客户端|测试开发|自动化测试|分布式|人工智能|机器学习|大模型|云平台|数据工程|数据开发|数据科学|数据分析|量化|统计|解决方案|架构师|前线部署|前沿部署|技术咨询|技术支持|客户工程|基础架构|算法|推理|训练|编译|算子|内核|软件|研发|开发工程|运维/i;
+  if (!engineering.test(`${title}\n${description}`)) return { priority: 0, reason: "本地预筛：没有软件、数据、量化或相关技术职责线索" };
   const internship = /\b(?:intern(?:ship)?|co[ -]?op)\b|实习|實習/i;
   const graduate = /\b(?:new[ -]?grad(?:uate)?s?|fresh[ -]?grad(?:uate)?s?|university grad(?:uate)?s?|campus|early[ -]?career|graduate (?:program|engineer|role)|entry[ -]?level|junior|jr\.?)\b|应届|應屆|校招|校园招聘|初级|初級|毕业生|畢業生/i;
   if (internship.test(title)) return { priority: 100, reason: null };
-  if (graduate.test(title) || /\bengineer\s+I\b/.test(title)) return { priority: 95, reason: null };
+  if (graduate.test(title) || /\b(?:engineer|developer|scientist|analyst|architect|consultant)\s+I\b/.test(title)) return { priority: 95, reason: null };
   // Eligibility/requirement language only, rather than incidental mentoring of juniors.
   const degree = /(?:currently (?:enrolled|pursuing)|pursuing (?:a |an )?(?:bachelor|master|PhD)|graduat(?:ing|e[sd]?) (?:in|between)|在读|在讀|毕业时间|畢業時間)/i;
   const entryRequirement = /(?:\b(?:new[ -]?grad(?:uate)?s?|fresh graduates?|entry[ -]?level|early[ -]?career|junior (?:engineer|developer)|no (?:prior |previous )?(?:work )?experience)\b|接受应届|应届毕业|校招|初级工程|无需.*经验)/i;

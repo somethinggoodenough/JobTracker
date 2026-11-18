@@ -21,7 +21,7 @@ export async function GET(request: Request) {
       FROM jobs WHERE posted_at > ?1 AND ai_policy=?4 AND json_extract(ai_analysis,'$.accepted')=1`).bind(query.bindings[0], query.today.start, query.today.end, AI_POLICY).first();
     const latestRun = await db.prepare("SELECT * FROM scrape_runs ORDER BY started_at DESC LIMIT 1").first();
     const pending = await db.prepare("SELECT COUNT(*) AS total FROM jobs WHERE ai_policy IS NULL OR ai_policy<>?1").bind(AI_POLICY).first<{ total: number }>();
-    return Response.json({ jobs: jobs.results.map(row => ({ ...row, classification: readAnalysis(row.ai_analysis) })), stats, latestRun, pagination: pages, today: query.today, pendingReview: pending?.total ?? 0 }, { headers: { "Cache-Control": "no-store" } });
+    return Response.json({ jobs: jobs.results.map(row => ({ ...row, classification: readAnalysis(row.ai_analysis, String(row.description || ""), String(row.location || "")) })), stats, latestRun, pagination: pages, today: query.today, pendingReview: pending?.total ?? 0 }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "读取职位失败" }, { status: 500 });
   }

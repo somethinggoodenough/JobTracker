@@ -222,7 +222,7 @@ export default function JobRadar({ view = "jobs" }: { view?: View }) {
 
         <section className="mb-5 rounded-2xl border border-[#dfe2d8] bg-white p-3 shadow-[0_8px_30px_rgba(25,45,30,.04)]">
           <div className="grid gap-2 md:grid-cols-[1fr_260px_190px]">
-            <label className="filter-field"><Search size={17} /><input value={query} onChange={(e) => { setQuery(e.target.value); setPage(1); }} placeholder="搜索所有页的公司、职位或技能…" /></label>
+            <label className="filter-field"><Search size={17} /><input aria-label="搜索职位" value={query} onChange={(e) => { setQuery(e.target.value); setPage(1); }} placeholder="搜索所有页的公司、职位或技能…" /></label>
             <label className="filter-field"><MapPin size={17} /><input value={location} onChange={(e) => { setLocation(e.target.value); setPage(1); }} placeholder="地点，例如 New York" /></label>
             <label className="filter-field"><Database size={17} /><select value={mode} onChange={(e) => { setMode(e.target.value); setPage(1); }}><option>全部方式</option><option>Remote</option><option>Full-time</option><option>Part-time</option></select></label>
           </div>

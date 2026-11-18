@@ -104,8 +104,8 @@ test('Coarse screening rejects clear non-target roles and required senior experi
  const classifier=createJobClassifier(db,config);
  for(const item of [
   {...job,title:'AI Marketing Intern'},
-  {...job,title:'Frontend Engineer Intern'},
-  {...job,title:'Software Test Engineer New Grad'},
+  {...job,title:'Brand Marketing Intern'},
+  {...job,title:'Account Executive Intern'},
   {...job,title:'Backend Engineer Intern',description:'Requirements:\nAt least 3 years of professional experience with backend services and Python.'},
   {...job,title:'后端开发工程师',description:'岗位要求：至少三年以上相关工作经验，熟练使用 Python。'},
  ]){const value=await classifier.evaluate(item);assert.equal(value.accepted,false);}

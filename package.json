@@ -15,6 +15,7 @@
     "test:navigation": "node scripts/test-navigation.mjs",
     "verify:community": "node scripts/verify-community-sources.mjs",
     "test:ai-settings": "node scripts/test-ai-settings.mjs",
+    "test:screening": "node scripts/test-broad-screening.mjs",
     "test:applications": "node scripts/test-applications.mjs",
     "test:resumes": "node scripts/test-resumes.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",

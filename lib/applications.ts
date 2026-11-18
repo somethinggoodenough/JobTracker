@@ -14,5 +14,5 @@ export async function applicationDetail(id: number) {
     resume,resume_id,resume_snapshot,email,applied_at,status,status_at,version,created_at,updated_at,ai_analysis FROM applications WHERE id=?1`).bind(id).first<Omit<ApplicationRecord, "resume_snapshot"> & { resume_snapshot: string | null; ai_analysis: string | null }>();
   if (!application) return null;
   const history = await db.prepare("SELECT id,status,reached_at,recorded_at FROM application_events WHERE application_id=?1 ORDER BY id").bind(id).all();
-  return { application: { ...application, resume_snapshot: readApplicationResume(application.resume_snapshot), classification: readAnalysis(application.ai_analysis) }, history: history.results };
+  return { application: { ...application, resume_snapshot: readApplicationResume(application.resume_snapshot), classification: readAnalysis(application.ai_analysis, application.description, application.location) }, history: history.results };
 }

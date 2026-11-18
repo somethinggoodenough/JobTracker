@@ -21,7 +21,7 @@ export default function AiFilterPanel({ active, onReview }: { active: boolean; o
   const cost = status ? estimateAiCost(status.usage) : null;
   const exhausted = status?.dailyBudget.remaining === 0, paused = status?.dailyBudget.limit === 0;
   return <section className="mb-6 rounded-2xl border border-[#cbd9c0] bg-[#eff5e7] p-5" aria-label="AI 筛选状态">
-    <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="font-semibold text-[#305336]">仅收录符合你的条件的职位</h2><p className="mt-2 text-xs leading-6 text-[#64725d]">10 类工程岗位 · Internship / New Grad / Junior · 工作地点中国或美国<br />先用本地规则粗筛、去重和复用缓存，再交给 DeepSeek；级别、地点不明确的职位不收录。<br />有发布日期只抓纽约当天发布的岗位；无发布日期时每个来源最多取前 50 条。</p></div>
+    <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="font-semibold text-[#305336]">相关技术岗位，宽松纳入</h2><p className="mt-2 text-xs leading-6 text-[#64725d]">软件 / AI / 数据科学 / 量化 / 技术方案 / 客户部署及相邻技术岗位，有相关职责即可考虑。<br />Internship / New Grad / Junior · 工作地点中国或美国；先粗筛、去重和复用缓存，再交给 DeepSeek。<br />美国岗位明确提供签证赞助时标注 US Sponsorship，并保留 JD 原句。<br />有发布日期只抓纽约当天发布的岗位；无发布日期时每个来源最多取前 50 条。</p></div>
       {!!status && (status.pendingReview>0 || status.pendingCandidates>0) && <button disabled={active || !status.configured || exhausted} onClick={onReview} className="sync-button">{active ? "筛选进行中…" : paused ? "AI 筛选已暂停" : exhausted ? "今日额度已用完" : "审核排队职位"}</button>}
     </div>
     {status && <AiBudgetSettings budget={status.dailyBudget} onSaveStart={()=>{statusVersion.current++;}} onSaved={dailyBudget=>{statusVersion.current++;setStatus(previous=>previous?{...previous,dailyBudget}:previous);}} />}
