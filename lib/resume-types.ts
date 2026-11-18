@@ -3,6 +3,7 @@ export const RESUMES_PAGE_SIZE = 12;
 export type ResumeRecord = {
   id: number; name: string; target_role: string; summary: string; created_at: string;
   tech_stack: string[]; content: string; version: number; recorded_at: string; updated_at: string;
+  pdf_name: string | null; pdf_size: number | null;
 };
 export type ResumeSummary = Omit<ResumeRecord, "content">;
 export class ResumeInputError extends Error {}

@@ -18,13 +18,15 @@
   ├─ scrape_source_progress  每个来源的实时进度
   ├─ applications  申请资料与独立保存的职位快照
   ├─ application_events  申请状态时间线
-  ├─ resumes       简历名称、目标岗位、创建时间、技术栈与可选正文
+  ├─ resumes       简历名称、目标岗位、创建时间、技术栈、正文与 PDF 元信息
   ├─ job_evaluations  内容指纹与 AI 筛选结果缓存
   └─ ai_usage  模型 token 用量（不含密钥或提示词）
         │
         ▼
 Next/Vinext API ── React 职位看板
 ```
+
+PDF 文件保存在 R2 对象存储；本地部署时由 Wrangler 写入 `.wrangler/state/v3/r2/`，无需云账号。
 
 ### 去重
 
@@ -54,6 +56,8 @@ DELETE FROM jobs WHERE posted_at <= 当前 UTC 时间 - 7 天;
 
 左侧“简历管理”（`/resumes`）支持新增、查看、编辑、搜索和删除简历，每页 12 份。每份记录包含名称、为哪个岗位准备、简短说明、创建时间、技术栈标签，以及可选的纯文本正文。时间按纽约时区填写和显示，以 UTC 存储；技术栈忽略大小写去重。独立的 `resumes` 表保存在同一个本地 SQLite 数据库中，不受职位 7 天清理影响，不调用 AI。列表不返回正文，只有打开编辑时读取；更新与删除使用版本检查，防止多窗口覆盖。申请记录中的简历文字仍可独立填写。备份简历时备份 `.wrangler/state/`，简历数据不会提交 Git。集成验证：`npm run test:resumes`（需先启动本地网站）。
 
+新建/编辑简历可上传一个最大 10 MB 的 PDF，支持保存前预览、保存后内嵌预览、新窗口查看、下载、替换与移除。选中的文件在点击保存后才持久化，取消编辑保留原文件。元信息与文件引用在一次数据库写入中保存；每次替换使用独立对象键，版本冲突不会覆盖已保存文件。替换、移除或删除简历会清理旧 PDF。接口按扩展名、MIME、PDF 文件头和结束标记校验，并限制实际上传流大小。预览接口支持字节范围，响应禁止缓存；上传文件不会送往 AI 或第三方解析服务。备份需同时包含 `.wrangler/state/v3/d1/` 与 `.wrangler/state/v3/r2/`，建议停服务后备份整个 `.wrangler/state/`。本轮未加入 LaTeX 编译，需要另行配置编译器服务。
+
 ## 岗位筛选
 
 职位仅在同时满足以下条件后入库和展示：指定的 10 类工程岗位、Internship / New Grad / Junior、中国或美国工作地点。明确资深、明确境外或 JD 缺失的职位先由规则排除；其余使用 DeepSeek 一次完成岗位分类、级别、地点和技术栈提取，并校验结果和原文引文。Junior 定义为明确初级/入门级或最低必需经验为 0–2 年且无资深要求；没有级别证据、国家不明或全球远程但没有明确中美选项时拒绝。模型有误判可能，JD 页保留判断依据以便核对。
@@ -80,6 +84,8 @@ DELETE FROM jobs WHERE posted_at <= 当前 UTC 时间 - 7 天;
 - `GET /api/resumes?page=1&q=`：搜索简历名称、目标岗位、说明与技术栈，每页 12 份，不返回正文。
 - `POST /api/resumes`：创建简历，必填 `name,target_role`；可选 `summary,created_at,tech_stack,content`，日期须为含时区的 ISO 时间。
 - `GET/PATCH/DELETE /api/resumes/:id`：读取完整简历、部分修改、删除。PATCH 和 DELETE 必须带 `version`；过期版本返回 409。
+- `POST /api/resumes` 和 `PATCH /api/resumes/:id` 也接受 `multipart/form-data`：`data` 为原 JSON 资料字符串，`pdf` 为文件；移除附件时使用 `remove_pdf=true`，不能同时上传和移除。未传附件字段时保留原文件。
+- `GET /api/resumes/:id/pdf`：内嵌读取 PDF，支持单段 `Range`；加 `?download=1` 下载。不提供公开存储键，未上传或已删除时返回 404。
 - `DELETE /api/sources/:id`：删除来源及对应职位。
 - `POST /api/sync`：手动执行一次完整同步。
 - `GET /api/sync/progress`：读取来源阶段、耗时、计数及错误；同步长请求用 JSON 空白心跳保持连接。

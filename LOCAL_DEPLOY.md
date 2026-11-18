@@ -31,7 +31,7 @@ npm ci
 npm run build
 ```
 
-仅在空数据库上，依次执行以下八条迁移。已有数据库不要重复执行已应用的迁移。
+仅在空数据库上，依次执行以下九条迁移。已有数据库不要重复执行已应用的迁移。
 
 ```powershell
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_complete_stephen_strange.sql
@@ -42,6 +42,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0005_workable_franklin_richards.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0006_talented_sally_floyd.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0007_stale_liz_osborn.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0008_uneven_reptil.sql
 ```
 
 启动服务器并保持这个终端运行：
@@ -98,7 +99,13 @@ npm run scheduler -- --port 4173
 
 简历独立保存在本地 SQLite 的 `resumes` 表，不受职位 7 天清理影响，不调用 DeepSeek。修改和删除会检查版本号，其他窗口已修改时提示刷新。备份请包含 `.wrangler/state/`；本地简历数据和正文不会提交 Git。申请页面中的简历文字说明仍独立保存。
 
-已经应用 `0006` 的旧数据库升级时，停止服务器和调度器、备份数据库，重新构建后只执行上面新增的 `0007_stale_liz_osborn.sql`，再启动服务及调度器。此迁移只新增简历表与索引，保留已有数据。`npm run test:resumes` 验证本地接口和桌面/手机页面，只创建并清理带唯一名称的测试简历，不调用模型。
+新建/编辑简历中的“上传 PDF”支持每份简历一个最大 10 MB 的文件。选中后可在保存前预览，点击“保存简历及 PDF”后与资料一起保存。已保存文件可以在编辑页预览或新窗口查看、下载、替换、移除；简历卡片也提供 PDF 查看入口。取消编辑不会替换原文件，移除需保存后生效，删除简历会同时删除附件。浏览器不支持内嵌显示时可新窗口查看或下载。
+
+PDF 通过本地模拟 R2（绑定 `BUCKET`）保存到 `.wrangler/state/v3/r2/`，元信息与引用保存在 SQLite；不会发送给 DeepSeek 或第三方服务。本地无需 Cloudflare 账号。备份和迁移时需停服务，并完整复制 `.wrangler/state/`，只复制 SQLite 文件不包含 PDF。本轮未实现 LaTeX 编译；本机未安装编译器，现有 Worker 后端需要单独接入编译服务。
+
+已经应用 `0006` 的旧数据库升级时，停止服务器和调度器、备份数据库，重新构建后依次执行上面新增的 `0007_stale_liz_osborn.sql` 和 `0008_uneven_reptil.sql`，再启动服务及调度器。`0007` 只新增简历表与索引，保留已有数据。`npm run test:resumes` 验证本地接口和桌面/手机页面，只创建并清理带唯一名称的测试简历，不调用模型。
+
+已经应用 `0007` 的数据库增加 PDF 功能时，停止服务器和调度器、备份数据库并重新构建，只补执行 `0008_uneven_reptil.sql`，再启动网站和调度器。`0008` 只增加三个可空的附件字段，已有简历无需修改。更早版本按顺序补齐未应用的迁移。`npm run test:resumes` 也会验证 PDF 上传、预览入口、下载、字节范围、取消替换、保存替换和移除。
 
 ## 申请职位状态
 
