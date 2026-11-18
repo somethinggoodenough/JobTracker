@@ -5,6 +5,7 @@ import type { FormEvent } from "react";
 import { ArrowUpRight, Check, FileText, Plus, Search, Trash2, X } from "lucide-react";
 import { applicationStatuses, type ApplicationEvent, type ApplicationRecord, type ApplicationStatus } from "@/lib/application-types";
 import { ClassificationTags, JobAnalysisPanel } from "@/components/job-classification";
+import ApplicationResumePicker, { type ResumeSelection } from "./application-resume-picker";
 
 type Pages = { page: number; pageSize: number; total: number; totalPages: number };
 type DetailResponse = { application: ApplicationRecord; history: ApplicationEvent[]; error?: string };
@@ -60,7 +61,7 @@ export function ApplicationTracker({ refreshKey, onOpen }: { refreshKey: number;
     {error && <p role="alert" className="mb-4 rounded-xl bg-red-50 p-4 text-sm text-red-700">{error}</p>}
     {loading ? <div className="h-44 animate-pulse rounded-2xl bg-white" /> : records.length ? <div className="grid gap-3 lg:grid-cols-2">{records.map(record => <button key={record.id} onClick={() => onOpen(record.id)} className="job-card w-full text-left">
       <div className="flex items-start justify-between gap-3"><div><p className="text-xs text-[#697169]">{record.company}</p><h2 className="mt-1 font-semibold">{record.title}</h2><p className="mt-2 text-xs text-[#697169]">{record.location}</p></div><span className="shrink-0 rounded-full bg-[#e5eedb] px-3 py-1 text-xs text-[#36531f]">{applicationStatuses[record.status]}</span></div>
-      <dl className="mt-5 grid gap-2 text-xs text-[#697169]"><div><dt className="inline">申请时间：</dt><dd className="inline">{dateLabel(record.applied_at)}</dd></div><div><dt className="inline">状态达到时间：</dt><dd className="inline">{dateLabel(record.status_at)}</dd></div><div className="truncate"><dt className="inline">申请邮箱：</dt><dd className="inline">{record.email || "尚未填写"}</dd></div><div className="truncate"><dt className="inline">所用简历：</dt><dd className="inline">{record.resume || "尚未填写"}</dd></div></dl>
+      <dl className="mt-5 grid gap-2 text-xs text-[#697169]"><div><dt className="inline">申请时间：</dt><dd className="inline">{dateLabel(record.applied_at)}</dd></div><div><dt className="inline">状态达到时间：</dt><dd className="inline">{dateLabel(record.status_at)}</dd></div><div className="truncate"><dt className="inline">申请邮箱：</dt><dd className="inline">{record.email || "尚未填写"}</dd></div><div className="truncate"><dt className="inline">所用简历：</dt><dd className="inline">{record.resume_snapshot ? `${record.resume_snapshot.name} · v${record.resume_snapshot.version}` : record.resume || "尚未填写"}</dd></div></dl>
       <p className="mt-4 flex items-center gap-1 text-xs font-medium text-[#365b3c]">编辑资料与状态时间线 <ArrowUpRight size={14} /></p>
     </button>)}</div> : !error && <div className="rounded-2xl border border-dashed border-[#cbd0c7] bg-white/60 px-6 py-16 text-center"><FileText className="mx-auto text-[#69805d]" size={32} /><h2 className="mt-4 text-xl font-semibold">{search || status ? "没有符合条件的申请记录" : "从第一个申请开始"}</h2><p className="mt-3 text-sm text-[#697169]">{search || status ? "试试其他搜索词或状态。" : "去全部职位点击「＋」，再填写你使用的简历和申请信息。"}</p></div>}
     <nav aria-label="申请记录分页" className="my-5 flex flex-wrap items-center gap-3 text-sm"><button className="icon-button" disabled={loading || pages.page <= 1} onClick={() => setPage(page-1)}>上一页</button><span>{pages.page} / {pages.totalPages}</span><button className="icon-button" disabled={loading || pages.page >= pages.totalPages} onClick={() => setPage(page+1)}>下一页</button><form className="ml-auto flex items-center gap-2" onSubmit={e => { e.preventDefault(); const n = Number(jump); if (Number.isSafeInteger(n) && n >= 1 && n <= pages.totalPages) setPage(n); }}><input aria-label="申请记录跳转页码" className="source-input w-20" type="number" min={1} max={pages.totalPages} value={jump} onChange={e => setJump(e.target.value)} /><button disabled={loading} className="icon-button">跳转</button></form></nav>
@@ -70,12 +71,14 @@ export function ApplicationTracker({ refreshKey, onOpen }: { refreshKey: number;
 export function ApplicationEditor({ id, onClose, onChanged }: { id: number; onClose: () => void; onChanged: (removed?: boolean) => void }) {
   const [record, setRecord] = useState<ApplicationRecord | null>(null), [history, setHistory] = useState<ApplicationEvent[]>([]);
   const [resume, setResume] = useState(""), [email, setEmail] = useState(""), [appliedAt, setAppliedAt] = useState("");
+  const [resumeSelection, setResumeSelection] = useState<ResumeSelection | null>(null), [resumeChanged, setResumeChanged] = useState(false);
   const [status, setStatus] = useState<ApplicationStatus>("saved"), [statusAt, setStatusAt] = useState("");
   const [saving, setSaving] = useState(false), [loading, setLoading] = useState(true), [error, setError] = useState(""), [saved, setSaved] = useState(false);
   const titleRef = useRef<HTMLHeadingElement>(null);
   function populate(data: { application: ApplicationRecord; history: ApplicationEvent[] }) {
     const app = data.application;
     setRecord(app); setHistory(data.history); setResume(app.resume); setEmail(app.email);
+    setResumeSelection(app.resume_snapshot); setResumeChanged(false);
     setAppliedAt(localInput(app.applied_at)); setStatus(app.status); setStatusAt(localInput(app.status_at));
   }
   useEffect(() => {
@@ -97,7 +100,8 @@ export function ApplicationEditor({ id, onClose, onChanged }: { id: number; onCl
     e.preventDefault(); if (!record || saving) return;
     setSaving(true); setError(""); setSaved(false);
     try {
-      const response = await fetch(`/api/applications/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resume, email, applied_at: toTimestamp(appliedAt, record.applied_at), status, status_at: toTimestamp(statusAt, record.status_at), version: record.version }) });
+      const response = await fetch(`/api/applications/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resume, email, applied_at: toTimestamp(appliedAt, record.applied_at), status, status_at: toTimestamp(statusAt, record.status_at), version: record.version,
+        ...(resumeChanged ? { resume_id: resumeSelection?.id ?? null, resume_version: resumeSelection?.version ?? null } : {}) }) });
       const data = await response.json() as DetailResponse; if (!response.ok) throw new Error(data.error || "保存失败");
       populate(data); setSaved(true); onChanged();
     } catch (e) { setError(e instanceof Error ? e.message : "保存失败"); }
@@ -127,7 +131,8 @@ export function ApplicationEditor({ id, onClose, onChanged }: { id: number; onCl
       <div className="mt-7"><p className="text-sm text-[#697169]">{record.company} · {record.location}</p><h3 className="mt-1 text-2xl font-semibold">{record.title}</h3><a className="mt-3 inline-flex items-center gap-1 text-sm text-[#3c6a42]" href={record.apply_url || record.canonical_url} target="_blank" rel="noreferrer">打开原职位 <ArrowUpRight size={15} /></a></div>
       <ClassificationTags analysis={record.classification} />
       <form onSubmit={save} onChange={() => setSaved(false)} className="mt-7"><fieldset disabled={saving} className="space-y-5">
-        <label className="block text-sm font-medium">申请使用的简历<textarea className="source-input mt-2 min-h-24 w-full font-normal" maxLength={4000} value={resume} onChange={e => setResume(e.target.value)} placeholder="例如：英文后端简历 v3.pdf，或简历链接、版本说明" /><span className="mt-1 block text-xs font-normal text-[#7b827b]">保存简历名称、版本或链接；此处填写文字，不上传文件。</span></label>
+        <ApplicationResumePicker value={resumeSelection} onChange={choice => { setResumeSelection(choice); setResumeChanged(true); setSaved(false); }} />
+        <label className="block text-sm font-medium">简历补充说明（可选）<textarea aria-label="简历补充说明" className="source-input mt-2 min-h-24 w-full font-normal" maxLength={4000} value={resume} onChange={e => setResume(e.target.value)} placeholder="可填写本次申请的简历备注、外部链接或其他说明" /><span className="mt-1 block text-xs font-normal text-[#7b827b]">原有简历文字说明会保留，也可以继续手动填写。</span></label>
         <label className="block text-sm font-medium">申请使用的邮箱<input className="source-input mt-2 w-full font-normal" type="email" maxLength={254} value={email} onChange={e => setEmail(e.target.value)} placeholder="your.name@example.com" /></label>
         <p className="text-xs text-[#7b827b]">以下时间按本机时区（{Intl.DateTimeFormat().resolvedOptions().timeZone}）填写和显示。</p>
         <label className="block text-sm font-medium">申请时间<input className="source-input mt-2 w-full font-normal" type="datetime-local" step="1" value={appliedAt} onChange={e => setAppliedAt(e.target.value)} /></label>

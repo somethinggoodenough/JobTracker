@@ -97,6 +97,9 @@ export const applications = sqliteTable("applications", {
   sourceName: text("source_name").notNull(),
   aiAnalysis: text("ai_analysis"),
   resume: text("resume").notNull().default(""),
+  // Preserve selection metadata even if the library entry is later removed.
+  resumeId: integer("resume_id"),
+  resumeSnapshot: text("resume_snapshot"),
   email: text("email").notNull().default(""),
   appliedAt: text("applied_at"),
   status: text("status").notNull().default("saved"),

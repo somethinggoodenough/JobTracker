@@ -1,6 +1,6 @@
 import { getD1 } from "@/lib/database";
 import { applicationDetail, applicationError } from "@/lib/applications";
-import { isApplicationStatus, positiveId, ApplicationInputError } from "@/lib/application-types";
+import { isApplicationStatus, positiveId, ApplicationInputError, readApplicationResume } from "@/lib/application-types";
 import { pagination } from "@/lib/job-query";
 import { AI_POLICY } from "@/lib/classification-types";
 
@@ -18,9 +18,9 @@ export async function GET(request: Request) {
     const page = Number(url.searchParams.get("page")) || 1;
     const pages = pagination(count?.total ?? 0, Number.isSafeInteger(page) ? Math.max(1, page) : 1);
     const rows = await db.prepare(`SELECT id,original_job_id,company,title,location,canonical_url,apply_url,source_name,
-      resume,email,applied_at,status,status_at,version,created_at,updated_at FROM applications WHERE ${where}
-      ORDER BY updated_at DESC,id DESC LIMIT ?3 OFFSET ?4`).bind(search, status, pages.pageSize, pages.offset).all();
-    return Response.json({ applications: rows.results, pagination: pages }, { headers });
+      resume,resume_id,resume_snapshot,email,applied_at,status,status_at,version,created_at,updated_at FROM applications WHERE ${where}
+      ORDER BY updated_at DESC,id DESC LIMIT ?3 OFFSET ?4`).bind(search, status, pages.pageSize, pages.offset).all<{ resume_snapshot: string | null }>();
+    return Response.json({ applications: rows.results.map(row => ({ ...row, resume_snapshot: readApplicationResume(row.resume_snapshot) })), pagination: pages }, { headers });
   } catch (error) { return applicationError(error); }
 }
 

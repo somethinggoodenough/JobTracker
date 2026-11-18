@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import {loadLocalTypeScript} from './load-local-typescript.mjs';
+import {verifyApplicationResumePicker} from './test-application-resume-picker.mjs';
 const {AI_POLICY}=loadLocalTypeScript('lib/classification-types.ts');
 const analysis={accepted:true,categories:['backend_distributed'],careerLevel:'new_grad',countries:['US'],techStack:[],roleEvidence:'Snapshot JD',levelEvidence:'New Grad',locationEvidence:'New York',reason:'Synthetic application fixture'};
 const base=process.argv[2]||'http://127.0.0.1:4173';
@@ -12,6 +13,7 @@ function execute(command){execFileSync(process.execPath,['--import','./scripts/s
 async function api(path,method='GET',body){const r=await fetch(base+path,{method,headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000)});return {status:r.status,...await r.json()};}
 const expectOK=result=>{assert(result.status===200||result.status===201,JSON.stringify(result));return result;};
 let applicationId;
+const resumeIds=[];
 const progress=await api('/api/sync/progress');
 if(['running','cancelling'].includes(progress.run?.status))throw new Error('Wait for the active sync to finish before running database fixture tests.');
 try{
@@ -47,10 +49,29 @@ try{
  DELETE FROM sources WHERE url=${sql(url)};`);
  detail=expectOK(await api(`/api/applications/${applicationId}`));assert.equal(detail.application.company,key);assert.equal(detail.application.description,'Snapshot JD for retention test');assert.equal(detail.history.length,4);
  assert.deepEqual(detail.application.classification,analysis,'The application retains its AI classification snapshot');
+ // Attach a library version, then prove ordinary application edits retain its saved metadata.
+ let library=(await api('/api/resumes','POST',{name:key+' resume v1',target_role:'Backend intern',tech_stack:['Go'],content:'Private resume text'})).resume;resumeIds.push(library.id);
+ const patch=()=>({...data,resume:detail.application.resume,status:detail.application.status,status_at:detail.application.status_at,version:detail.application.version});
+ detail=expectOK(await api(`/api/applications/${applicationId}`,'PATCH',{...patch(),resume_id:library.id,resume_version:library.version}));
+ const snapshot=detail.application.resume_snapshot;assert.equal(snapshot.id,library.id);assert.equal(snapshot.name,library.name);assert.equal(snapshot.version,1);assert(!('content' in snapshot));assert.equal(detail.history.length,4);
+ library=expectOK(await api(`/api/resumes/${library.id}`,'PATCH',{name:key+' resume v2',version:library.version})).resume;
+ detail=expectOK(await api(`/api/applications/${applicationId}`,'PATCH',{...patch(),email:'updated@example.com'}));assert.deepEqual(detail.application.resume_snapshot,snapshot);
+ assert.equal((await api(`/api/applications/${applicationId}`,'PATCH',{...patch(),resume_id:library.id,resume_version:1})).status,409);
+ detail=expectOK(await api(`/api/applications/${applicationId}`,'PATCH',{...patch(),resume_id:library.id,resume_version:library.version}));assert.equal(detail.application.resume_snapshot.name,library.name);assert.equal(detail.application.resume_snapshot.version,2);
+ const latestSnapshot=detail.application.resume_snapshot;
+ expectOK(await api(`/api/resumes/${library.id}`,'DELETE',{version:library.version}));
+ detail=expectOK(await api(`/api/applications/${applicationId}`,'PATCH',patch()));assert.deepEqual(detail.application.resume_snapshot,latestSnapshot);assert.equal(detail.history.length,4);
+ assert.equal((await api(`/api/applications/${applicationId}`,'PATCH',{...patch(),resume_id:library.id,resume_version:2})).status,400);
+ detail=expectOK(await api(`/api/applications/${applicationId}`,'PATCH',{...patch(),resume_id:null}));assert.equal(detail.application.resume_id,null);assert.equal(detail.application.resume_snapshot,null);assert.equal(detail.application.resume,data.resume);
+ assert.equal((await api(`/api/applications/${applicationId}`,'PATCH',{...patch(),resume_snapshot:{name:'forged'}})).status,400);
+ // More than one library page: verify the UI can choose records beyond the first twelve.
+ const fixtures=[];for(let i=0;i<14;i++){const record=expectOK(await api('/api/resumes','POST',{name:key+' picker '+i,target_role:'AI Engineer',tech_stack:['Python']})).resume;fixtures.push(record);resumeIds.push(record.id);}
+ await verifyApplicationResumePicker({base,applicationId,key,fixtures,api});
  assert.equal((await api('/api/applications','POST',{jobId:job.id})).status,404);
  for(const path of ['/','/applications','/today','/sources','/runs']){const response=await fetch(base+path);assert.equal(response.status,200);const html=await response.text();assert(html.includes('href="/applications"'));if(path==='/applications')assert(html.includes('申请职位状态'));}
  expectOK(await api(`/api/applications/${applicationId}`,'DELETE'));assert.equal((await api(`/api/applications/${applicationId}`)).status,404);
- console.log(JSON.stringify({pass:true,concurrentDedup:true,statusHistory:true,optimisticEdits:true,retentionSnapshot:true,allRoutes:true}));
+ console.log(JSON.stringify({pass:true,concurrentDedup:true,statusHistory:true,optimisticEdits:true,retentionSnapshot:true,libraryResumeSelection:true,savedVersionPreserved:true,allRoutes:true}));
 }finally{
+ for(const id of resumeIds){const result=await api('/api/resumes/'+id);if(result.status===200)expectOK(await api('/api/resumes/'+id,'DELETE',{version:result.resume.version}));}
  execute(`DELETE FROM applications WHERE canonical_url=${sql(url)};DELETE FROM jobs WHERE canonical_url=${sql(url)};DELETE FROM sources WHERE url=${sql(url)};`);
 }

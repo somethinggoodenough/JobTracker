@@ -54,6 +54,8 @@ DELETE FROM jobs WHERE posted_at <= 当前 UTC 时间 - 7 天;
 
 点击职位卡片「＋」可创建申请记录，保存简历名称/版本/链接、邮箱、申请时间、状态及状态时间；简历字段是文字，不上传文件。公司、标题、链接和 JD 保存为快照，原职位过期或来源删除不影响记录。`applications` 使用规范 URL 和职位指纹唯一索引避免重复；`application_events` 记录状态变化，修改当前状态的时间会修正最新事件。修改使用版本号检查，防止多窗口覆盖；申请记录仅由用户主动移除。时间按本机时区显示，以 UTC 存库。
 
+“申请资料与进度”也可以从简历库选择简历，支持搜索、翻页和刷新，保留原文字作为补充说明。申请保存 `resume_id` 和服务器生成的 `resume_snapshot`（名称、版本、目标岗位、创建时间、技术栈、PDF 文件名），不额外复制简历正文或 PDF；简历库后续修改、删除不会改写已保存的申请记录。切换简历时核验库中版本并在写入时再次检查，过期选择返回 409，已删除选择返回 400。单独编辑申请状态或邮箱时沿用已保存版本，取消选择后补充说明仍保留。申请列表显示所用名称与版本。
+
 左侧“简历管理”（`/resumes`）支持新增、查看、编辑、搜索和删除简历，每页 12 份。每份记录包含名称、为哪个岗位准备、简短说明、创建时间、技术栈标签，以及可选的纯文本正文。时间按纽约时区填写和显示，以 UTC 存储；技术栈忽略大小写去重。独立的 `resumes` 表保存在同一个本地 SQLite 数据库中，不受职位 7 天清理影响，不调用 AI。列表不返回正文，只有打开编辑时读取；更新与删除使用版本检查，防止多窗口覆盖。申请记录中的简历文字仍可独立填写。备份简历时备份 `.wrangler/state/`，简历数据不会提交 Git。集成验证：`npm run test:resumes`（需先启动本地网站）。
 
 新建/编辑简历可上传一个最大 10 MB 的 PDF，支持保存前预览、保存后内嵌预览、新窗口查看、下载、替换与移除。选中的文件在点击保存后才持久化，取消编辑保留原文件。元信息与文件引用在一次数据库写入中保存；每次替换使用独立对象键，版本冲突不会覆盖已保存文件。替换、移除或删除简历会清理旧 PDF。接口按扩展名、MIME、PDF 文件头和结束标记校验，并限制实际上传流大小。预览接口支持字节范围，响应禁止缓存；上传文件不会送往 AI 或第三方解析服务。备份需同时包含 `.wrangler/state/v3/d1/` 与 `.wrangler/state/v3/r2/`，建议停服务后备份整个 `.wrangler/state/`。本轮未加入 LaTeX 编译，需要另行配置编译器服务。
@@ -80,6 +82,7 @@ DELETE FROM jobs WHERE posted_at <= 当前 UTC 时间 - 7 天;
 - `GET /api/applications?page=1&q=&status=`：每页 50 条申请记录，支持搜索和状态筛选。
 - `POST /api/applications`：传入 `{ "jobId": 123 }` 创建职位快照，重复添加返回已有记录。
 - `GET/PATCH/DELETE /api/applications/:id`：读取资料与时间线、保存资料、移除记录。PATCH 传入 `resume,email,applied_at,status,status_at,version`；日期使用含时区的 ISO 时间，过期版本返回 409。
+- PATCH 可额外传 `resume_id,resume_version` 选择简历库版本；传 `resume_id:null` 取消选择，省略这两项保留原选择与快照。`resume_snapshot` 为只读字段。
 - `GET/POST /api/sources`：读取或添加招聘来源。
 - `GET /api/resumes?page=1&q=`：搜索简历名称、目标岗位、说明与技术栈，每页 12 份，不返回正文。
 - `POST /api/resumes`：创建简历，必填 `name,target_role`；可选 `summary,created_at,tech_stack,content`，日期须为含时区的 ISO 时间。
