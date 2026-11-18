@@ -45,6 +45,7 @@ function relativeTime(date?: string) {
 }
 
 const adapterName: Record<string, string> = {
+  github_jobs: "GitHub / Simplify 职位列表",
   feishu: "飞书招聘", moka: "Moka", beisen: "北森 / Zhiye", gem: "Gem", salesforce: "Salesforce 专用",
   dify: "Dify 专用", xiaomi: "小米专用", kuaishou: "快手专用", meituan: "美团专用", alibaba: "阿里招聘",
   netease: "网易专用", xiaohongshu: "小红书专用", jdcom: "京东专用", tiktok: "TikTok 专用", meta: "Meta 专用", baidu: "百度专用", antgroup: "蚂蚁集团专用",

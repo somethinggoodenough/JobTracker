@@ -102,6 +102,17 @@ DELETE FROM jobs WHERE posted_at <= 当前 UTC 时间 - 7 天;
 - Workday company career sites
 - Workable company career sites（含完整 JD）
 - 含 Schema.org `JobPosting` JSON-LD 的通用招聘网页
+- SimplifyJobs / Pitt CSC 实习与 SimplifyJobs / Coder Quad New Grad 的公开 GitHub JSON 列表
+
+### Simplify 与 GitHub 职位列表
+
+`lib/community-crawlers.ts` 支持 [SimplifyJobs 实习列表](https://github.com/SimplifyJobs/Summer2027-Internships) 和 [New Grad 列表](https://github.com/SimplifyJobs/New-Grad-Positions)。无需 GitHub token；从公开原始 JSON 读取在招、可见岗位，按列表收录时间排序并去重，每个来源最多取前 50 条，再访问公开 Simplify 详情取得原始 JD 和工作地点。优先保留公司原始申请链接，使官网与聚合来源沿用现有 URL/指纹去重、规则粗筛、AI 配额及 7 天保留规则。技术栈仍由现有筛选流程依据 JD 提取。
+
+仓库 `date_posted` 是列表收录时间；Simplify 的 `start_date`、`updated_date`、`date_display` 及 JSON-LD 日期也不能保证是公司首次发布日期，均不伪装为今日发布。缺乏可信原网站日期时标为日期未知，按首次发现保留 7 天，重复抓取不续期。Simplify 详情失败时，仅尝试已支持的 Greenhouse、Lever、Workable 单岗位接口；若原网站提供可信发布日期，仍仅抓纽约当天。缺少 JD、详情受限或协议变更会明确报错/标记部分完成，不会用列表标题拼造 JD。
+
+来源页可粘贴这两个仓库根链接、GitHub `blob/.../listings.json`、`raw.githubusercontent.com` JSON 链接，或 Simplify 的 `Top-Summer-Internships-YYYY` 列表链接。其他仓库需提供兼容 Simplify 字段的 JSON 文件；尚未支持任意 README Markdown 表格。年份变化后应更新到仍维护的实习仓库。
+
+`npm run verify:community` 会将以上两个来源添加到本地并逐一验证，通过后启用；不调用 DeepSeek，也不写入正式职位。验证结果保存在 `outputs/community-source-verification.json`，之后正常手动或每小时同步时才进入岗位筛选。无需重新导入全部公司来源。
 
 ### 公司专用适配器
 

@@ -4,6 +4,7 @@ import { companyProfile, dedicatedAdapters } from "./company-crawlers";
 import { currentCrawlWindow, isOlderThanCrawlWindow, shiftCalendarDate, withCrawlWindow } from "./crawl-window";
 import { hasPublicationDate, selectPostingRows } from "./crawl-policy";
 import { createPostingSelection } from "./crawl-policy";
+import { githubJobs, githubListingsUrl } from "./community-crawlers";
 
 function companyFromUrl(url: string): string {
   try {
@@ -21,7 +22,8 @@ export function normalizeSource(input: string, requested: SourceAdapter = "auto"
   let adapter = requested;
   let fetchUrl = parsed.toString();
   if (adapter === "auto") {
-    if (host.includes("greenhouse.io")) adapter = "greenhouse";
+    if (host === "github.com" || host === "raw.githubusercontent.com" || host === "simplify.jobs") adapter = "github_jobs";
+    else if (host.includes("greenhouse.io")) adapter = "greenhouse";
     else if (host.includes("lever.co")) adapter = "lever";
     else if (host.includes("ashbyhq.com")) adapter = "ashby";
     else if (host.includes("myworkdayjobs.com")) adapter = "workday";
@@ -32,6 +34,7 @@ export function normalizeSource(input: string, requested: SourceAdapter = "auto"
     else if (host === "jobs.gem.com") adapter = "gem";
     else if (host === "lifeattiktok.com") adapter = "tiktok";
   }
+  if (adapter === "github_jobs") fetchUrl = githubListingsUrl(parsed.href);
   if (adapter === "greenhouse" && !host.startsWith("boards-api.")) {
     const token = parts[0] === "embed" ? parsed.searchParams.get("for") : parts[0];
     if (token) fetchUrl = `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(token)}/jobs?content=true`;
@@ -269,6 +272,7 @@ async function crawlRaw(source: SourceRecord): Promise<CrawlBatch> {
   const dedicated = dedicatedAdapters[source.adapter];
   if (dedicated) return dedicated(source, profile && "account" in profile ? profile.account ?? "" : "");
   const normalized = normalizeSource(source.url, source.adapter);
+  if (normalized.adapter === "github_jobs") return githubJobs(source);
   const normalizedDedicated = dedicatedAdapters[normalized.adapter];
   if (normalizedDedicated) return normalizedDedicated({ ...source, adapter: normalized.adapter }, "");
   if (normalized.adapter === "auto") return genericPage(source);

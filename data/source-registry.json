@@ -1,4 +1,6 @@
 [
+  {"name":"Simplify / Pitt CSC 实习（GitHub）","url":"https://github.com/SimplifyJobs/Summer2027-Internships","kind":"portfolio"},
+  {"name":"Simplify / Coder Quad New Grad（GitHub）","url":"https://github.com/SimplifyJobs/New-Grad-Positions","kind":"portfolio"},
   {"name":"Greenhouse","url":"https://www.greenhouse.com/","kind":"provider","note":"ATS 平台，不存在单一全站职位 feed；公司级 Greenhouse boards 已由适配器支持"},
   {"name":"Ashby","url":"https://www.ashbyhq.com/","kind":"provider","note":"ATS 平台，不存在单一全站职位 feed；公司级 Ashby boards 已由适配器支持"},
   {"name":"Lever","url":"https://www.lever.co/","kind":"provider","note":"ATS 平台，不存在单一全站职位 feed；公司级 Lever boards 已由适配器支持"},

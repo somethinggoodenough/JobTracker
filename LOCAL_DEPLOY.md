@@ -154,6 +154,14 @@ node scripts/review-existing-jobs.mjs http://127.0.0.1:4173
 
 ## 公司专用适配验证
 
+Simplify / GitHub CS 职位列表的接入验证（先启动本地网站，保持同步空闲并暂停独立调度器）：
+
+```powershell
+npm run verify:community
+```
+
+会添加并验证 Simplify/Pitt CSC 实习及 Simplify/Coder Quad New Grad 两个来源，只读取公开列表和 JD，不调用模型；验证可用后启用，实际职位由后续手动/每小时同步筛选后入库。无需数据库迁移。来源中的原始申请链接参与跨站去重；列表收录时间不当作公司发布日期，缺乏可信日期时每源只取前 50 条，按首次发现保留 7 天。报告位于 `outputs/community-source-verification.json`；详情受限会明确说明，全部失败的来源不会启用。
+
 ```powershell
 npm run test:adapters
 node scripts/verify-runtime-adapters.mjs http://127.0.0.1:4173
