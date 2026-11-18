@@ -45,6 +45,7 @@ function relativeTime(date?: string) {
 }
 
 const adapterName: Record<string, string> = {
+  boss_campus: "BOSS 直聘官方校招",
   pinpoint: "Pinpoint", eightfold_legacy: "Eightfold / Netflix", avature: "Avature / Lenovo", phenom: "Phenom / Cisco",
   beisen_pb: "北森 pb", shlab: "上海 AI 实验室", kuaishou_campus: "快手校园", huawei: "华为校园", luchentech: "潞晨官网",
   github_jobs: "GitHub / Simplify 职位列表",
@@ -231,8 +232,8 @@ export default function JobRadar({ view = "jobs" }: { view?: View }) {
           <div className="mt-2 grid gap-2 sm:grid-cols-2"><label className="filter-field"><Layers3 size={17} /><select aria-label="岗位分类" value={category} onChange={e => { setCategory(e.target.value); setPage(1); }}><option value="">全部岗位分类</option>{Object.entries(jobCategories).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><label className="filter-field"><Sparkles size={17} /><select aria-label="职业级别" value={level} onChange={e => { setLevel(e.target.value); setPage(1); }}><option value="">全部初级类别</option>{Object.entries(careerLevels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label></div>
         </section>
 
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_330px]">
-          <section>
+        <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_330px]">
+          <section className="min-w-0">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-[#717971]">共 <strong className="text-[#172019]">{pages.total}</strong> 个职位 · 第 {pages.page} / {pages.totalPages} 页</p><p className="text-xs text-[#8a9089]">每页 50 条 · 按发布时间排序</p></div>
             <PaginationControls pages={pages} disabled={loading} onChange={setPage} />
             {loading ? <LoadingCards /> : filtered.length ? <div className="space-y-3">{filtered.map((job) => <JobCard key={job.id} job={job} adding={addingJobs.has(job.id)} onAdd={() => addApplication(job)} onClick={() => setSelected(job)} />)}</div> : <EmptyState hasSources={sources.length > 0} onAdd={() => setShowSources(true)} onSync={syncNow} />}

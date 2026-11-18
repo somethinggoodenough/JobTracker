@@ -105,6 +105,8 @@ Internship / New Grad / Junior 和中美工作地点条件继续保留。明确�
 
 ## 支持的来源
 
+首页可编辑粗筛条件和完整 AI prompt，设置持久保存在本地数据库，从下一轮同步生效；操作说明、BOSS/快手/Twitch 及追加 10 家公司实测见 [筛选设置与新增来源](docs/SCREENING_SETTINGS.md)。
+
 - Greenhouse job boards
 - Lever postings
 - Ashby job boards

@@ -1,11 +1,14 @@
 import { readFileSync, writeFileSync } from 'node:fs';
-import targets from '../data/expanded-adapter-targets.json' with { type: 'json' };
+import expandedTargets from '../data/expanded-adapter-targets.json' with { type: 'json' };
+import screeningTargets from '../data/screening-source-targets.json' with { type: 'json' };
+const targets = process.argv.includes('--screening') ? screeningTargets : expandedTargets;
 // Merge by employer name, preserving all existing entries and their source identities.
 for (const file of ['data/company-adapters.json', 'data/source-registry.json']) {
   const rows = JSON.parse(readFileSync(file, 'utf8'));
   for (const target of targets) {
     const index = rows.findIndex(row => row.name === target.name);
-    const entry = file.includes('company-adapters') ? target : { name: target.name, url: target.url, kind: 'company' };
+    const {kind, ...profile} = target;
+    const entry = file.includes('company-adapters') ? profile : { name: target.name, url: target.url, kind: kind || 'company' };
     if (index >= 0) rows[index] = { ...rows[index], ...entry };
     else rows.push(entry);
   }

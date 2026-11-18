@@ -3,7 +3,7 @@ import { clean, fetchJson, fetchSource, mapPool, stripHtml } from "./crawler-htt
 import { createPostingSelection, selectPostingRows } from "./crawl-policy";
 import { careerSession, jobPostingJson, publicDate as date, requireRows } from "./career-session";
 import { createDecipheriv } from "node:crypto";
-import { ruleRejection } from "./job-classifier";
+import { currentScreeningRules } from "./screening-context";
 import { syncDelay } from "./sync-control";
 
 const jsonPost = (body: unknown): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -46,8 +46,7 @@ export async function salesforce(source: SourceRecord): Promise<JobRecord[]> {
     const rows = requireRows(data.Report_Entry, "Salesforce"), total = Number(data.Total_Jobs);
     if (!Number.isFinite(total)) throw new Error("Salesforce 缺少总职位数");
     const selected = rows.filter(row => selection.accept(date(row.External_Job_Posting_Start_Date))
-      && (!row.Countries?.length || row.Countries.some((c: string) => /United States|China|\bUSA?\b|中国|美国/i.test(c)))
-      && !ruleRejection({ externalId: clean(row.Job_Requisition_Ref_ID), company: source.name, title: clean(row.Job_Posting_Title), location: clean(row.Job_Requisition_Primary_Location), canonicalUrl: source.url, description: "Pending full JD" }));
+      && (!currentScreeningRules().coarse.rejectForeignLocations || !row.Countries?.length || row.Countries.some((c: string) => /United States|China|\bUSA?\b|中国|美国/i.test(c))));
     jobs.push(...await mapPool(selected, async row => {
       let description = row.Job_Description;
       if (!description) {

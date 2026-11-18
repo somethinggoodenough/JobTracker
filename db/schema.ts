@@ -165,6 +165,13 @@ export const aiSettings = sqliteTable("ai_settings", {
   dailyLimit: integer("daily_limit").default(DEFAULT_DAILY_AI_LIMIT),
   updatedAt: text("updated_at").notNull(),
 });
+export const screeningSettings = sqliteTable("screening_settings", {
+  id: integer("id").primaryKey(),
+  coarseJson: text("coarse_json").notNull().default("{}"),
+  aiPrompt: text("ai_prompt"),
+  version: integer("version").notNull().default(1),
+  updatedAt: text("updated_at").notNull(),
+});
 export const jobDiscoveries = sqliteTable("job_discoveries", {
   identity: text("identity").primaryKey(),
   firstSeenAt: text("first_seen_at").notNull(),

@@ -249,6 +249,28 @@ export async function phenom(source: SourceRecord): Promise<JobRecord[]> {
   throw new Error("Cisco Phenom 分页超过上限");
 }
 
+export async function bossCampus(source: SourceRecord, account: string): Promise<JobRecord[]> {
+  if (!account) throw new Error("BOSS 公司校招需要配置当前官方招聘页面编号");
+  const data = await fetchJson("https://www.zhipin.com/wapi/zpxzats/geek/h5/volunteer/getJobList4Page", {
+    method: "POST", headers: { "content-type": "application/json", origin: "https://www.zhipin.com", referer: source.url },
+    body: JSON.stringify({ encryptPageId: account, encryptOrgId: "", showSelector: true, showJobList: true, page: 1, pageSize: 50,
+      advertSource: "99", jobCategoryList: [], cityList: [], labelIdList4And: [[], []], jobName: "", showOnline: true }),
+  });
+  if (data.code !== 0) throw new Error(`BOSS 公司校招接口错误：${clean(data.message || data.code)}`);
+  const select = createPostingSelection();
+  const categories = Array.isArray(data.zpData?.jobLabelAllList) ? data.zpData.jobLabelAllList : [];
+  const typeCategory = categories.find((c: any) => c.name === "招聘类型");
+  const labels = new Map((typeCategory?.children ?? []).map((label: any) => [Number(label.id), clean(label.name)]));
+  return requireRows(data.zpData?.geekVolunteerVOS, "BOSS 公司校招").filter(() => select.accept(null)).map(j => {
+    if (!j.url) throw new Error("BOSS 公司职位缺少官方详情链接");
+    const url = new URL(j.url, source.url).href;
+    const type = (j.jobLabelIdList ?? []).filter((pair: any) => Array.isArray(pair) && Number(pair[0]) === Number(typeCategory?.id)).map((pair: any) => labels.get(Number(pair[1]))).filter(Boolean).join(" · ") || "校园招聘";
+    return { ...record(source, j.encryptJobId, j.jobName, url, jd(`招聘类别：${type}`, j.postDescription, j.degreeValue), clean(j.addressName)),
+      company: clean(j.orgName) || "BOSS直聘", employmentType: type };
+  });
+}
+
 export const expandedAdapters: Partial<Record<SourceAdapter, (s: SourceRecord, account: string) => Promise<JobRecord[]>>> = {
+  boss_campus: bossCampus,
   pinpoint, eightfold_legacy: eightfoldLegacy, shlab, beisen_pb: beisenPb, kuaishou_campus: kuaishouCampus, huawei, luchentech, avature, phenom,
 };

@@ -73,7 +73,7 @@ export async function upsertJob(db: D1Database, source: SourceRecord, job: JobRe
   catch (error) {
     if (existing) await db.prepare("UPDATE jobs SET ai_policy=NULL WHERE id=?1").bind(existing.id).run();
     if (error instanceof AwaitingClassification) {
-      await enqueueCandidate(db, source, job, url, dedupeKey, firstSeen, new Date(Date.parse(postedAt)+7*DAY).toISOString(), error.priority, model);
+      await enqueueCandidate(db, source, job, url, dedupeKey, firstSeen, new Date(Date.parse(postedAt)+7*DAY).toISOString(), error.priority, model, classifier.settings);
       return { state: "queued" as const, deleted: 0 };
     }
     throw error;

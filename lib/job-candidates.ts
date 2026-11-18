@@ -1,6 +1,7 @@
 import type { JobRecord, SourceRecord } from "./job-types";
 import { classificationKey, type createJobClassifier } from "./job-classifier";
 import { isCrawlCandidate } from "./crawl-policy";
+import type { ScreeningRules } from "./screening-defaults";
 
 // Stale queue entries are skipped, not rejected as ineligible jobs: approved
 // historical records must keep their original seven-day retention.
@@ -17,8 +18,8 @@ export async function rememberFirstSeen(db: D1Database, identities: [string,stri
   return firstSeen;
 }
 export async function enqueueCandidate(db: D1Database, source: SourceRecord, job: JobRecord, url: string, dedupe: string,
-  firstSeen: string, expiresAt: string, priority: number, model: string) {
-  const now = new Date().toISOString(), hash = await classificationKey(job, model);
+  firstSeen: string, expiresAt: string, priority: number, model: string, settings?: ScreeningRules) {
+  const now = new Date().toISOString(), hash = await classificationKey(job, model, undefined, settings);
   await db.prepare(`INSERT INTO job_candidates(source_id,canonical_url,dedupe_key,content_hash,payload_json,priority,first_seen_at,last_seen_at,expires_at,next_retry_at)
     VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?8)
     ON CONFLICT DO UPDATE SET source_id=excluded.source_id,payload_json=excluded.payload_json,

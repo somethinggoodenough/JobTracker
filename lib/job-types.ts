@@ -2,7 +2,7 @@ export type SourceAdapter = "auto" | "greenhouse" | "lever" | "ashby" | "workday
   | "amazon" | "google" | "jibe" | "tencent" | "eightfold" | "oracle" | "smartrecruiters" | "apple" | "paycor" | "comeet"
   | "feishu" | "salesforce" | "dify" | "xiaomi" | "beisen" | "kuaishou" | "meituan" | "gem"
   | "alibaba" | "netease" | "xiaohongshu" | "jdcom" | "tiktok" | "meta" | "moka" | "baidu" | "antgroup" | "github_jobs"
-  | "pinpoint" | "eightfold_legacy" | "avature" | "phenom" | "beisen_pb" | "shlab" | "kuaishou_campus" | "huawei" | "luchentech";
+  | "pinpoint" | "eightfold_legacy" | "avature" | "phenom" | "beisen_pb" | "shlab" | "kuaishou_campus" | "huawei" | "luchentech" | "boss_campus";
 
 export type JobRecord = {
   externalId: string;

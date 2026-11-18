@@ -1,7 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import targets from '../data/expanded-adapter-targets.json' with { type: 'json' };
+import expandedTargets from '../data/expanded-adapter-targets.json' with { type: 'json' };
+import screeningTargets from '../data/screening-source-targets.json' with { type: 'json' };
 import { loadLocalTypeScript } from './load-local-typescript.mjs';
 const nodeMode = process.argv.includes('--node');
+const screening = process.argv.includes('--screening');
+const targets = screening ? screeningTargets : expandedTargets;
 const filter = process.argv.find(arg => arg.startsWith('--only='))?.slice(7).split(',');
 const selected = targets.filter(t => !filter || filter.includes(t.adapter) || filter.includes(t.name));
 const base = 'http://127.0.0.1:4173';
@@ -14,7 +17,7 @@ const sources = nodeMode ? [] : (await (await fetch(`${base}/api/sources`)).json
 const results = [];
 let cursor = 0;
 mkdirSync('outputs', { recursive: true });
-const reportPath = `outputs/expanded-${nodeMode ? 'node' : 'worker'}-verification.json`;
+const reportPath = `outputs/${screening ? 'screening-sources' : 'expanded'}-${nodeMode ? 'node' : 'worker'}-verification.json`;
 const previous = filter && existsSync(reportPath) ? JSON.parse(readFileSync(reportPath, 'utf8')).sources : [];
 async function worker() {
   while (cursor < selected.length) {

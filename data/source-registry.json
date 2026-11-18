@@ -195,5 +195,18 @@
   {"name":"Morgan Stanley","url":"https://morganstanley.eightfold.ai/careers","kind":"company"},
   {"name":"Cisco","url":"https://careers.cisco.com/global/en/search-results","kind":"company"},
   {"name":"Akamai","url":"https://jobs.akamai.com/en/sites/CX_1","kind":"company"},
-  {"name":"Nuro","url":"https://job-boards.greenhouse.io/nuro","kind":"company"}
+  {"name":"Nuro","url":"https://job-boards.greenhouse.io/nuro","kind":"company"},
+  {"name":"Boss直聘（公司校招）","url":"https://www.zhipin.com/campus/pc/","kind":"company"},
+  {"name":"Boss直聘（平台搜索）","url":"https://www.zhipin.com/web/geek/job?query=开发","kind":"portfolio"},
+  {"name":"Twitch","url":"https://job-boards.greenhouse.io/twitch","kind":"company"},
+  {"name":"Stripe","url":"https://job-boards.greenhouse.io/stripe","kind":"company"},
+  {"name":"Figma","url":"https://job-boards.greenhouse.io/figma","kind":"company"},
+  {"name":"Notion","url":"https://jobs.ashbyhq.com/notion","kind":"company"},
+  {"name":"Discord","url":"https://job-boards.greenhouse.io/discord","kind":"company"},
+  {"name":"Reddit","url":"https://job-boards.greenhouse.io/reddit","kind":"company"},
+  {"name":"Datadog","url":"https://job-boards.greenhouse.io/datadog","kind":"company"},
+  {"name":"Dropbox","url":"https://job-boards.greenhouse.io/dropbox","kind":"company"},
+  {"name":"GitLab","url":"https://job-boards.greenhouse.io/gitlab","kind":"company"},
+  {"name":"Duolingo","url":"https://job-boards.greenhouse.io/duolingo","kind":"company"},
+  {"name":"Jane Street","url":"https://job-boards.greenhouse.io/janestreet","kind":"company"}
 ]

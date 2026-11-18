@@ -31,6 +31,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .tag { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; overflow: hidden; border: 1px solid #e0e3dc; border-radius: 999px; background: #f7f8f4; padding: 4px 8px; color: #626b63; font-size: 10px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .source-input { min-width: 0; height: 42px; border: 1px solid #d8ddd2; border-radius: 10px; background: #fff; padding: 0 12px; outline: none; font-size: 13px; }
 .source-input:focus { border-color: #91aa89; box-shadow: 0 0 0 3px rgba(101,142,81,.1); }
+#screening-settings-editor { min-width: 0; overflow-wrap: anywhere; }
+#screening-settings-editor textarea.source-input { height: auto; padding: 10px 12px; }
 .jd { overflow-wrap: anywhere; }
 
 @media (max-width: 640px) {

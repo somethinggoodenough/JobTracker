@@ -31,7 +31,7 @@ npm ci
 npm run build
 ```
 
-仅在空数据库上，依次执行以下十条迁移。已有数据库不要重复执行已应用的迁移。
+仅在空数据库上，依次执行以下十一条迁移。已有数据库不要重复执行已应用的迁移。
 
 ```powershell
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_complete_stephen_strange.sql
@@ -44,6 +44,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0007_stale_liz_osborn.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0008_uneven_reptil.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0009_safe_darkhawk.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0010_fearless_inertia.sql
 ```
 
 启动服务器并保持这个终端运行：
@@ -115,6 +116,8 @@ PDF 通过本地模拟 R2（绑定 `BUCKET`）保存到 `.wrangler/state/v3/r2/`
 申请保存所选简历 ID、名称、版本、目标岗位、创建时间、技术栈及 PDF 文件名的元信息快照；不会额外复制正文或 PDF 文件。简历库之后重命名、修改或删除，不会改写已保存的申请信息。选择尚未保存的旧版本会提示刷新后重新选择；只修改申请状态或邮箱时继续保留原版本。取消选择并保存会解除关联，补充说明继续保留。申请列表显示所选名称和版本。PDF 可在简历管理查看。
 
 升级已应用 `0008` 的本地数据库时，停止网站与调度器、备份数据库，重新构建后只补执行上面的 `0009_safe_darkhawk.sql`，再启动服务和调度器。迁移仅新增两个可空字段，旧申请和简历数据保留。更早副本需按顺序补齐所有未应用的迁移。
+
+本次首页粗筛条件和 AI prompt 编辑还需补执行 `0010_fearless_inertia.sql`。若已有 `0009`，只执行 `0010`；它新增独立的 `screening_settings` 表，不更改现有职位、申请、简历和每日额度。首页展开「粗筛条件与 AI Prompt」保存，下一次同步或队列审核生效。
 
 申请记录保存在同一个本地数据库的 `applications` 表，状态时间线保存在 `application_events` 表。申请时间和状态时间按本机时区填写、以 UTC 存储。状态变化追加一条历史；仅修正当前状态时间则更新最后一条历史。更早的历史记录继续保留，多窗口同时修改会提示冲突。
 

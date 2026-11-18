@@ -1,7 +1,6 @@
 import profiles from "@/data/company-adapters.json";
 import { additionalAdapters } from "./additional-crawlers";
 import { expandedAdapters } from "./expanded-crawlers";
-import { ruleRejection } from "./job-classifier";
 import { throwIfSyncCancelled } from "./sync-control";
 import type { JobRecord, SourceAdapter, SourceRecord } from "./job-types";
 import { clean, fetchJson, fetchSource, mapPool, recent, stripHtml } from "./crawler-http";
@@ -127,7 +126,7 @@ export async function eightfold(source: SourceRecord, account: string): Promise<
     const data = await fetchJson(url.toString());
     if (!Array.isArray(data.data?.positions)) throw new Error("Eightfold 返回结构已变更");
     const rows = data.data.positions;
-    await mapPool<any, void>(rows.filter((j: any) => selection.accept(iso(j.postedTs)) && !ruleRejection({ externalId: clean(j.id), company: source.name, title: clean(j.name), location: (j.locations ?? []).join(" · "), canonicalUrl: source.url, description: "Pending full JD" })), async j => {
+    await mapPool<any, void>(rows.filter((j: any) => selection.accept(iso(j.postedTs))), async j => {
       const detailUrl = new URL("/api/pcsx/position_details", source.url);
       detailUrl.search = new URLSearchParams({ position_id: String(j.id), domain: account }).toString();
       const d = (await fetchJson(detailUrl.toString())).data;
@@ -215,7 +214,7 @@ export async function apple(source: SourceRecord): Promise<JobRecord[]> {
     validPages++;
     const rows = data.searchResults;
     const errors: string[] = [];
-    const jobs = await mapPool<any, JobRecord | null>(rows.filter((j: any) => selection.accept(iso(j.postDateInGMT || j.postingDate)) && j.team?.teamName !== "Apple Retail" && !ruleRejection({ externalId: clean(j.positionId), company: source.name, title: clean(j.postingTitle), location: country === "united-states-USA" ? "United States" : "China", canonicalUrl: source.url, description: "Pending full JD" })), async j => { try {
+    const jobs = await mapPool<any, JobRecord | null>(rows.filter((j: any) => selection.accept(iso(j.postDateInGMT || j.postingDate))), async j => { try {
       const url = `https://jobs.apple.com/en-us/details/${encodeURIComponent(j.positionId)}/${encodeURIComponent(j.transformedPostingTitle)}`;
       const d = parseApple(await (await fetchSource(url)).text()).jobDetails?.jobsData;
       if (!d?.description) throw new Error(`Apple 职位详情缺失：${j.positionId}`);

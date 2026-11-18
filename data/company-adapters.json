@@ -108,5 +108,18 @@
   {"name":"Morgan Stanley","adapter":"eightfold","account":"morganstanley.com","url":"https://morganstanley.eightfold.ai/careers"},
   {"name":"Cisco","adapter":"phenom","url":"https://careers.cisco.com/global/en/search-results"},
   {"name":"Akamai","adapter":"oracle","account":"https://fa-extu-saasfaprod1.fa.ocs.oraclecloud.com","site":"CX_1","url":"https://jobs.akamai.com/en/sites/CX_1"},
-  {"name":"Nuro","adapter":"greenhouse","url":"https://job-boards.greenhouse.io/nuro"}
+  {"name":"Nuro","adapter":"greenhouse","url":"https://job-boards.greenhouse.io/nuro"},
+  {"name":"Boss直聘（公司校招）","adapter":"boss_campus","account":"51ac73d03f5fb46c0nR6","url":"https://www.zhipin.com/campus/pc/"},
+  {"name":"Boss直聘（平台搜索）","adapter":"auto","url":"https://www.zhipin.com/web/geek/job?query=开发","unavailableReason":"已尝试平台搜索及公开列表：搜索接口返回 code 37 环境异常，列表进入安全验证页；目前不能稳定匿名抓取。BOSS 公司自身校招已通过独立来源接入"},
+  {"name":"Twitch","adapter":"greenhouse","url":"https://job-boards.greenhouse.io/twitch"},
+  {"name":"Stripe","adapter":"greenhouse","url":"https://job-boards.greenhouse.io/stripe"},
+  {"name":"Figma","adapter":"greenhouse","url":"https://job-boards.greenhouse.io/figma"},
+  {"name":"Notion","adapter":"ashby","url":"https://jobs.ashbyhq.com/notion"},
+  {"name":"Discord","adapter":"greenhouse","url":"https://job-boards.greenhouse.io/discord"},
+  {"name":"Reddit","adapter":"greenhouse","url":"https://job-boards.greenhouse.io/reddit"},
+  {"name":"Datadog","adapter":"greenhouse","url":"https://job-boards.greenhouse.io/datadog"},
+  {"name":"Dropbox","adapter":"greenhouse","url":"https://job-boards.greenhouse.io/dropbox"},
+  {"name":"GitLab","adapter":"greenhouse","url":"https://job-boards.greenhouse.io/gitlab"},
+  {"name":"Duolingo","adapter":"greenhouse","url":"https://job-boards.greenhouse.io/duolingo"},
+  {"name":"Jane Street","adapter":"greenhouse","url":"https://job-boards.greenhouse.io/janestreet"}
 ]

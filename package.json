@@ -11,7 +11,7 @@
     "build": "node scripts/run-framework.mjs build",
     "start": "node --import ./scripts/sites-env.mjs ./scripts/start-local.mjs",
     "scheduler": "node scripts/local-scheduler.mjs",
-    "test:adapters": "node --test tests/company-adapters.test.mjs tests/additional-adapters.test.mjs tests/expanded-adapters.test.mjs tests/community-adapters.test.mjs tests/daily-pagination.test.mjs tests/applications.test.mjs tests/job-classifier.test.mjs tests/budget-unknown.test.mjs tests/resumes.test.mjs",
+    "test:adapters": "node --test tests/company-adapters.test.mjs tests/additional-adapters.test.mjs tests/expanded-adapters.test.mjs tests/screening-settings.test.mjs tests/community-adapters.test.mjs tests/daily-pagination.test.mjs tests/applications.test.mjs tests/job-classifier.test.mjs tests/budget-unknown.test.mjs tests/resumes.test.mjs",
     "verify:expanded": "node scripts/verify-expanded-sources.mjs",
     "test:navigation": "node scripts/test-navigation.mjs",
     "verify:community": "node scripts/verify-community-sources.mjs",

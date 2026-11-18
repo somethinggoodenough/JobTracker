@@ -10,10 +10,17 @@ import { reviewStoredJobs } from "./job-review";
 import { seedDiscoveries, upsertJob } from "./job-storage";
 import { DailyModelLimit } from "./ai-budget";
 import { reviewCurrentCandidate } from "./job-candidates";
+import { screeningSettings } from "./screening-settings";
+import { withScreeningRules } from "./screening-context";
 
 const DAY = 86_400_000;
 
 export async function runSync(options: { reviewOnly?: boolean } = {}): Promise<SyncSummary> {
+  const db = getD1();
+  const settings = await screeningSettings(db);
+  return withScreeningRules(settings, () => runSyncWithSettings(options));
+}
+async function runSyncWithSettings(options: { reviewOnly?: boolean }): Promise<SyncSummary> {
   const db = getD1();
   const now = new Date().toISOString();
   const cutoff = Date.now() - 7 * DAY;
