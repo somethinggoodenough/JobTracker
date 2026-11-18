@@ -1,4 +1,4 @@
-import { confirmedUsSponsorship, type UsSponsorship } from "./sponsorship";
+import { assessUsSponsorship, type UsSponsorship, type VisaSponsorship } from "./sponsorship";
 export const AI_POLICY = "early-career-cn-us-v1";
 // Broader role relevance is a superset of the existing acceptance policy.
 // Keep approved jobs visible; invalidate old rejection caches independently.
@@ -21,6 +21,7 @@ export type JobAnalysis = {
   techStack: { name: string; evidence: string }[];
   roleEvidence: string; levelEvidence: string; locationEvidence: string; reason: string;
   usSponsorship?: UsSponsorship;
+  visaSponsorship?: VisaSponsorship;
 };
 export type JobDecision = JobAnalysis | { accepted: false; reason: string };
 export function readAnalysis(value: unknown, description?: string, location = ""): JobAnalysis | null {
@@ -28,8 +29,12 @@ export function readAnalysis(value: unknown, description?: string, location = ""
     const data = typeof value === "string" ? JSON.parse(value) : value;
     if (data?.accepted !== true) return null;
     if (description === undefined) return data as JobAnalysis;
-    const { usSponsorship: claim, ...analysis } = data;
-    const sponsorship = confirmedUsSponsorship(description, analysis.countries || [], claim, location);
-    return { ...analysis, ...(sponsorship ? { usSponsorship: sponsorship } : {}) } as JobAnalysis;
+    const { usSponsorship: claim, visaSponsorship: _stored, ...analysis } = data;
+    const visaSponsorship = assessUsSponsorship(description, analysis.countries || [], claim, location);
+    return {
+      ...analysis,
+      ...(visaSponsorship ? { visaSponsorship } : {}),
+      ...(visaSponsorship?.status === "available" ? { usSponsorship: { available: true, evidence: visaSponsorship.evidence } } : {}),
+    } as JobAnalysis;
   } catch { return null; }
 }

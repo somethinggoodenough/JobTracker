@@ -31,7 +31,7 @@ npm ci
 npm run build
 ```
 
-仅在空数据库上，依次执行以下十一条迁移。已有数据库不要重复执行已应用的迁移。
+仅在空数据库上，依次执行以下十二条迁移。已有数据库只执行尚未应用的迁移。
 
 ```powershell
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_complete_stephen_strange.sql
@@ -45,6 +45,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0008_uneven_reptil.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0009_safe_darkhawk.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0010_fearless_inertia.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0011_puzzling_living_lightning.sql
 ```
 
 启动服务器并保持这个终端运行：
@@ -118,6 +119,19 @@ PDF 通过本地模拟 R2（绑定 `BUCKET`）保存到 `.wrangler/state/v3/r2/`
 升级已应用 `0008` 的本地数据库时，停止网站与调度器、备份数据库，重新构建后只补执行上面的 `0009_safe_darkhawk.sql`，再启动服务和调度器。迁移仅新增两个可空字段，旧申请和简历数据保留。更早副本需按顺序补齐所有未应用的迁移。
 
 本次首页粗筛条件和 AI prompt 编辑还需补执行 `0010_fearless_inertia.sql`。若已有 `0009`，只执行 `0010`；它新增独立的 `screening_settings` 表，不更改现有职位、申请、简历和每日额度。首页展开「粗筛条件与 AI Prompt」保存，下一次同步或队列审核生效。
+
+抓取优化需要 `0011_puzzling_living_lightning.sql`。本地启动会为内置招聘来源启动独立抓取进程，详情缓存位于 `.wrangler/state/crawl-details.sqlite`。列表每轮仍检查纽约当天或前 50 条无日期岗位。有更新标识的详情在标识变化时重新下载，最长缓存 12 小时。其余详情缓存 2 小时。自定义来源仍走现有应用进程。
+
+可在本地 `.env` 设置以下参数，重启后生效。默认每个主机最多 3 个并发请求，部分共享 ATS 最多 5 个，Eightfold PCSX 每主机串行。
+
+| 参数 | 默认值 | 可选范围 |
+| --- | ---: | --- |
+| `JOB_RADAR_SOURCE_CONCURRENCY` | 6 | 1–12 个来源 |
+| `JOB_RADAR_HTTP_CONCURRENCY` | 12 | 1–24 个并发抓取请求 |
+| `JOB_RADAR_AI_CONCURRENCY` | 3 | 1–4 个并发审核 |
+| `JOB_RADAR_SOURCE_TIMEOUT_SECONDS` | 180 | 1–600 秒 |
+
+同步进度的来源明细显示列表、详情、缓存命中和本地处理耗时。并发请求的累计耗时可能大于来源实际耗时。
 
 申请记录保存在同一个本地数据库的 `applications` 表，状态时间线保存在 `application_events` 表。申请时间和状态时间按本机时区填写、以 UTC 存储。状态变化追加一条历史；仅修正当前状态时间则更新最后一条历史。更早的历史记录继续保留，多窗口同时修改会提示冲突。
 

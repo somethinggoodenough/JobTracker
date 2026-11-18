@@ -8,7 +8,7 @@ export async function dailyModelBudget(db: D1Database, now = new Date()) {
   const recorded = await db.prepare("SELECT COUNT(*) AS total FROM ai_usage WHERE created_at>=?1 AND created_at<?2")
     .bind(window.start, window.end).first<{ total: number }>();
   await db.prepare(`INSERT INTO ai_daily_budget(day,used) VALUES(?1,?2)
-    ON CONFLICT(day) DO UPDATE SET used=MAX(ai_daily_budget.used,excluded.used)`).bind(window.date, recorded?.total ?? 0).run();
+    ON CONFLICT(day) DO UPDATE SET used=excluded.used WHERE excluded.used>ai_daily_budget.used`).bind(window.date, recorded?.total ?? 0).run();
   const row = await db.prepare("SELECT used FROM ai_daily_budget WHERE day=?1").bind(window.date).first<{ used: number }>();
   const used = Math.max(row?.used ?? 0, recorded?.total ?? 0);
   const { dailyLimit: limit } = await aiSettings(db);

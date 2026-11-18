@@ -1,5 +1,6 @@
 import { currentSyncSignal, syncDelay, throwIfSyncCancelled } from "./sync-control";
 import { isInCrawlWindow } from "./crawl-window";
+import { crawlPerformance, detailRequest } from "./crawl-performance";
 
 export const clean = (value: unknown) => value == null ? "" : String(value).trim();
 
@@ -14,27 +15,63 @@ export function stripHtml(value: unknown): string {
     .replace(/\n{3,}/g, "\n\n").trim().slice(0, 40_000);
 }
 
-const hostQueues = new Map<string, Promise<void>>();
+async function bufferResponse(response: Response) {
+  if (!response.body) return response;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array<ArrayBuffer>[] = [];
+  let bytes = 0;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > 32 * 1024 * 1024) throw new Error("招聘响应超过 32 MiB");
+      chunks.push(new Uint8Array(value));
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+  const copy = new Response(new Blob(chunks), { status: response.status, statusText: response.statusText, headers: response.headers });
+  Object.defineProperty(copy, "url", { value: response.url });
+  return copy;
+}
+
 export async function fetchSource(url: string, init: RequestInit = {}) {
   const parsed = new URL(url);
+  const performance = crawlPerformance.getStore();
+  const metrics = performance?.metrics;
+  const detail = detailRequest.getStore();
   for (let attempt = 0; attempt < 3; attempt++) {
     throwIfSyncCancelled();
-    if (parsed.pathname.startsWith("/api/pcsx/")) {
-      const previous = hostQueues.get(parsed.host) ?? Promise.resolve();
-      const next = previous.catch(() => {}).then(() => syncDelay(500));
-      hostQueues.set(parsed.host, next); await next;
-    }
-    throwIfSyncCancelled();
-    const signal = AbortSignal.any([AbortSignal.timeout(20_000), currentSyncSignal(), init.signal].filter((s): s is AbortSignal => !!s));
     let response: Response;
-    try { response = await fetch(url, { ...init, signal,
-      headers: { "user-agent": "Mozilla/5.0 (compatible; JobRadar/1.0)",
-        accept: "application/json,text/html;q=0.9", ...(init.headers ?? {}) } }); }
+    const request = async () => {
+      if (parsed.pathname.startsWith("/api/pcsx/")) await syncDelay(500);
+      const timeout = AbortSignal.timeout(20_000);
+      const signal = AbortSignal.any([timeout, currentSyncSignal(), init.signal].filter((s): s is AbortSignal => !!s));
+      const started = Date.now();
+      if (metrics) metrics[detail ? "detailRequests" : "listRequests"]++;
+      try {
+        const result = await fetch(url, { ...init, signal,
+          headers: { "user-agent": "Mozilla/5.0 (compatible; JobRadar/1.0)",
+            accept: "application/json,text/html;q=0.9", ...(init.headers ?? {}) } });
+        return performance && result.ok ? await bufferResponse(result) : result;
+      } catch (error) {
+        if (timeout.aborted && metrics) metrics.timeouts++;
+        throw error;
+      } finally {
+        if (metrics) metrics[detail ? "detailMs" : "listMs"] += Date.now() - started;
+      }
+    };
+    try { response = performance ? await performance.limit(parsed, request) : await request(); }
     catch (error) {
       throwIfSyncCancelled();
       throw new Error(`${error instanceof Error ? error.message : "网络请求失败"} · ${parsed.hostname}${parsed.pathname}`, { cause: error });
     }
     if (response.ok || init.redirect === "manual" && [301, 302, 303, 307, 308].includes(response.status)) return response;
+    if (response.status === 429 && metrics) metrics.throttled++;
     if (response.status === 429 && attempt < 2) {
       const retry = response.headers.get("Retry-After");
       const delay = retry ? (/^\d+$/.test(retry) ? Number(retry) * 1000 : Date.parse(retry) - Date.now()) : (attempt + 1) * 3000;
@@ -43,6 +80,7 @@ export async function fetchSource(url: string, init: RequestInit = {}) {
         await syncDelay(delay); continue;
       }
     }
+    await response.body?.cancel();
     throw new Error(`HTTP ${response.status} · ${parsed.hostname}${parsed.pathname}`);
   }
   throw new Error("请求重试耗尽");

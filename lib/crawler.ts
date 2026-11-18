@@ -1,10 +1,11 @@
 import type { CrawlBatch, JobRecord, SourceAdapter, SourceRecord } from "./job-types";
-import { clean, fetchSource, stripHtml, recent, mapPool } from "./crawler-http";
+import { clean, fetchSource, stripHtml } from "./crawler-http";
 import { companyProfile, dedicatedAdapters } from "./company-crawlers";
 import { currentCrawlWindow, isOlderThanCrawlWindow, shiftCalendarDate, withCrawlWindow } from "./crawl-window";
 import { hasPublicationDate, selectPostingRows } from "./crawl-policy";
 import { createPostingSelection } from "./crawl-policy";
 import { githubJobs, githubListingsUrl } from "./community-crawlers";
+import { mapDetails } from "./detail-cache";
 
 function companyFromUrl(url: string): string {
   try {
@@ -75,13 +76,19 @@ async function greenhouseToday(fetchUrl: string, source: SourceRecord): Promise<
   const selected = selectPostingRows<any>(listing.jobs, j => j.first_published);
   if (!selected.length) return Object.assign([], metadata);
   // Large daily batches are cheaper as one feed; small ones fetch only today's JDs.
-  const jobs = selected.length > 20 && !unknown
-    ? ((await (await fetchSource(fetchUrl)).json()) as any).jobs.filter((j:any) => recent(j.first_published))
-    : await mapPool<any,any>(selected, async j => {
+  const jobs = await mapDetails<any, any>(selected, j => [j.id, j.updated_at, j.first_published], async j => {
       if (j.content) return j;
       const detail = new URL(url); detail.pathname += `/${encodeURIComponent(j.id)}`; detail.search = "";
       return { ...j, ...await (await fetchSource(detail.toString())).json() as any };
-    });
+    }, 4, selected.length > 20 && !unknown ? async rows => {
+      const full = ((await (await fetchSource(fetchUrl)).json()) as any).jobs;
+      const byId = new Map(full.map((job: any) => [job.id, job]));
+      return rows.map(row => {
+        const job = byId.get(row.id);
+        if (!job) throw new Error(`Greenhouse 职位在抓取时已变更：${row.id}`);
+        return job;
+      });
+    } : undefined);
   return Object.assign(greenhouse({ jobs }, source), metadata);
 }
 
@@ -147,9 +154,7 @@ async function workday(source: SourceRecord): Promise<JobRecord[]> {
     if (offset === 1980) truncated = true;
   }
   const todayJobs = selectPostingRows<any>(jobs, job => relativePostedAt(job.postedOn));
-  const results: JobRecord[] = [];
-  for (let i = 0; i < todayJobs.length; i += 8) {
-    const batch = await Promise.all(todayJobs.slice(i, i + 8).map(async (job) => {
+  const results = await mapDetails<any, JobRecord>(todayJobs, job => [job.externalPath, job.updatedAt, job.title, job.locationsText, relativePostedAt(job.postedOn)], async job => {
         const detailResponse = await fetchSource(`${base}${job.externalPath}`);
         const detail = (await detailResponse.json() as any).jobPostingInfo ?? {};
         if (!detail.jobDescription || !detail.title) throw new Error(`Workday 职位详情缺失：${job.externalPath}`);
@@ -161,9 +166,7 @@ async function workday(source: SourceRecord): Promise<JobRecord[]> {
           employmentType: clean(detail.timeType), department: clean(detail.jobFamily), salary: clean(detail.compensation),
           description: stripHtml(detail.jobDescription), postedAt: clean(detail.startDate) || relativePostedAt(job.postedOn),
         } satisfies JobRecord;
-    }));
-    for (const item of batch) if (item) results.push(item as JobRecord);
-  }
+  });
   return truncated ? Object.assign(results, { warnings: ["Workday 今日职位超过 2000 条，本次仅完成部分分页"] }) : results;
 }
 
@@ -186,7 +189,7 @@ async function workable(source: SourceRecord): Promise<JobRecord[]> {
     token = data.nextPage;
     if (page === 99) throw new Error("Workable 分页超过上限");
   }
-  return mapPool<any, JobRecord>(selected, async (job) => {
+  return mapDetails<any, JobRecord>(selected, job => [job.shortcode, job.updated_at, job.published, job.title], async (job) => {
     const response = await fetchSource(`https://apply.workable.com/api/v2/accounts/${encodeURIComponent(account)}/jobs/${encodeURIComponent(job.shortcode)}`);
     const detail = await response.json() as any;
     if (!detail.description) throw new Error(`Workable 职位完整 JD 缺失：${job.shortcode}`);

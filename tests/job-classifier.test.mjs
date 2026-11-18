@@ -11,7 +11,7 @@ const {estimateAiCost}=loadLocalTypeScript('lib/ai-cost.ts');
 const {AI_POLICY}=loadLocalTypeScript('lib/classification-types.ts');
 const {readAnalysis,jobCategories}=loadLocalTypeScript('lib/classification-types.ts');
 const {localShortlist}=loadLocalTypeScript('lib/local-shortlist.ts');
-const {confirmedUsSponsorship}=loadLocalTypeScript('lib/sponsorship.ts');
+const {confirmedUsSponsorship,assessUsSponsorship}=loadLocalTypeScript('lib/sponsorship.ts');
 const job={externalId:'1',company:'Example',title:'Backend Engineer - New Grad',location:'New York, United States',canonicalUrl:'https://example.invalid/1',description:'New Grad engineering role. Build backend services using Python and PostgreSQL. Location: United States.',postedAt:new Date().toISOString()};
 const decision={accepted:true,categories:['backend_distributed'],careerLevel:'new_grad',countries:['US'],techStack:[{name:'Python',evidence:'using Python and PostgreSQL'}],roleEvidence:'backend services',levelEvidence:'New Grad',locationEvidence:'United States',reason:'美国后端应届岗位'};
 function database(){
@@ -92,6 +92,29 @@ test('US sponsorship annotations require an affirmative, verbatim role-specific 
  assert(confirmedUsSponsorship('US positions offer H1B visa sponsorship.',['US'],null,'US; UK'));
  assert.equal(parseDecision({...decision,usSponsorship:{available:true,evidence:'Invented sponsorship'}},job).accepted,true,'Invalid annotation must not reject a valid job');
  assert.equal(readAnalysis({...decision,usSponsorship:{available:true,evidence:'Invented sponsorship'}},job.description,job.location).usSponsorship,undefined);
+});
+test('US sponsorship reads explicit support, refusal and uncertainty from original text',()=>{
+ const cases=[
+  ['Immigration sponsorship is available for this role.','available'],
+  ['This position is not eligible for Intel immigration sponsorship.','unavailable'],
+  ['Candidates must be authorized to work in the U.S. without sponsorship.','unavailable'],
+  ['Legal Authorization to work in the United States – sponsorship will not be provided for this role.','unavailable'],
+  ['We offer visa sponsorship for this position. This role does not provide visa sponsorship.','unavailable'],
+  ['Visa sponsorship may be considered.','unclear'],
+  ['The company can support visa transfers but will not sponsor individuals for H-1B CAP applications.','unclear'],
+  ['We do not discriminate based on whether candidates need visa sponsorship.','unclear'],
+  ['The position has a mentor and a company sponsor.','unclear'],
+  ['Export compliance requires eligibility without sponsorship for an export license.','unclear'],
+  ['OPT and CPT candidates are welcome.','unclear'],
+ ];
+ for(const [description,status] of cases){
+  const result=assessUsSponsorship(description,['US'],null,'New York, United States');
+  assert.equal(result.status,status,description);
+  if(status!=='unclear')assert(description.includes(result.evidence),description);
+  assert.equal(readAnalysis(decision,description,'New York, United States').visaSponsorship.status,status,description);
+ }
+ assert.equal(assessUsSponsorship('No visa sponsorship.',['US','CN'],null,'United States; China').status,'unclear');
+ assert.equal(assessUsSponsorship('No visa sponsorship.',['CN']),undefined);
 });
 test('Concurrent duplicates and later hourly runs reuse persistent decisions and do not pay again',async t=>{
  const {db,sqlite}=database();let calls=0;

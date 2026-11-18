@@ -60,7 +60,7 @@ export function createJobClassifier(db: D1Database, config: { apiKey: string; mo
   const pending = new Map<string, Promise<JobDecision>>();
   let active = 0, fatal = "";
   const queue: (() => void)[] = [];
-  const metrics = { calls: 0, requests: 0, cacheHits: 0, ruleRejected: 0 };
+  const metrics = { calls: 0, requests: 0, cacheHits: 0, ruleRejected: 0, requestMs: 0 };
   async function remote(job: JobRecord, key: string, feedback?: string): Promise<JobDecision> {
     if (active >= 4) await new Promise<void>(resolve => queue.push(resolve));
     else active++;
@@ -74,6 +74,7 @@ export function createJobClassifier(db: D1Database, config: { apiKey: string; mo
         // Reserve every outbound attempt, including retries and corrective requests.
         await reserveModelRequest(db);
         throwIfSyncCancelled();
+        const requestStarted = Date.now();
         try {
           metrics.requests++;
           response = await fetch("https://api.deepseek.com/chat/completions", {
@@ -88,7 +89,7 @@ export function createJobClassifier(db: D1Database, config: { apiKey: string; mo
         } catch {
           throwIfSyncCancelled();
           throw new ClassificationUnavailable("DeepSeek 请求超时或网络异常，本条未入库，下次同步重试");
-        }
+        } finally { metrics.requestMs += Date.now() - requestStarted; }
         if ((response.status === 429 || response.status >= 500) && attempt === 0) { await response.body?.cancel(); await syncDelay(1500); continue; }
         break;
       }

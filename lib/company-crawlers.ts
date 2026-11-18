@@ -4,6 +4,7 @@ import { expandedAdapters } from "./expanded-crawlers";
 import { throwIfSyncCancelled } from "./sync-control";
 import type { JobRecord, SourceAdapter, SourceRecord } from "./job-types";
 import { clean, fetchJson, fetchSource, mapPool, recent, stripHtml } from "./crawler-http";
+import { mapDetails } from "./detail-cache";
 import { isOlderThanCrawlWindow } from "./crawl-window";
 import { createPostingSelection, isCrawlCandidate, selectPostingRows } from "./crawl-policy";
 
@@ -99,7 +100,7 @@ export async function tencent(source: SourceRecord): Promise<JobRecord[]> {
     const rows = data.Data.Posts;
     const published = (j:any) => iso(j.PublishTime || j.PostDate || j.FirstPublishTime);
     const selected = rows.filter((j: any) => selection.accept(published(j)));
-    const parsed = await mapPool<any, JobRecord>(selected, async j => {
+    const parsed = await mapDetails<any, JobRecord>(selected, j => [j.PostId, null, published(j), j.RecruitPostName, j.LocationName], async j => {
       const detail = await fetchJson(`https://careers.tencent.com/tencentcareer/api/post/ByPostId?postId=${j.PostId}&language=zh-cn`);
       if (detail.Code !== 200 || !detail.Data) throw new Error(`腾讯职位详情失败：${j.PostId}`);
       const d = detail.Data;
@@ -126,16 +127,21 @@ export async function eightfold(source: SourceRecord, account: string): Promise<
     const data = await fetchJson(url.toString());
     if (!Array.isArray(data.data?.positions)) throw new Error("Eightfold 返回结构已变更");
     const rows = data.data.positions;
-    await mapPool<any, void>(rows.filter((j: any) => selection.accept(iso(j.postedTs))), async j => {
+    const priorCount = jobs.length;
+    const parsed = await mapDetails<any, JobRecord>(rows.filter((j: any) => selection.accept(iso(j.postedTs))),
+      j => [j.id, j.updatedTs, j.postedTs, j.name, j.locations], async j => {
       const detailUrl = new URL("/api/pcsx/position_details", source.url);
       detailUrl.search = new URLSearchParams({ position_id: String(j.id), domain: account }).toString();
       const d = (await fetchJson(detailUrl.toString())).data;
       if (!d?.jobDescription) throw new Error(`Eightfold 职位详情缺失：${j.id}`);
       const url = new URL(d.publicUrl || j.positionUrl, source.url).toString();
-      jobs.push({ externalId: clean(d.atsJobId || j.id), company: source.name, title: clean(d.name), canonicalUrl: url, applyUrl: url,
+      const job = { externalId: clean(d.atsJobId || j.id), company: source.name, title: clean(d.name), canonicalUrl: url, applyUrl: url,
         location: clean(d.locations?.join(" · ") || d.location), department: clean(d.department), workplaceType: clean(d.workLocationOption),
-        description: stripHtml(d.jobDescription), postedAt: iso(d.postedTs) });
+        description: stripHtml(d.jobDescription), postedAt: iso(d.postedTs) };
+      jobs.push(job);
+      return job;
     }, 1);
+    jobs.splice(priorCount, jobs.length - priorCount, ...parsed);
     if (!rows.length || start + rows.length >= Number(data.data.count) || selection.stop(rows.map((j:any) => iso(j.postedTs)))) return jobs;
     start += rows.length;
   }
@@ -157,7 +163,8 @@ export async function oracle(source: SourceRecord, origin: string): Promise<JobR
     url.search = new URLSearchParams({ onlyData: "true", expand: "requisitionList", finder: `findReqs;siteNumber=${site},limit=100,offset=${offset},sortBy=POSTING_DATES_DESC` }).toString();
     const data = (await fetchJson(url.toString())).items?.[0];
     if (!Array.isArray(data?.requisitionList)) throw new Error("Oracle 返回结构已变更");
-    jobs.push(...await mapPool<any, JobRecord>(data.requisitionList.filter((j: any) => selection.accept(iso(j.PostedDate))), async j => {
+    jobs.push(...await mapDetails<any, JobRecord>(data.requisitionList.filter((j: any) => selection.accept(iso(j.PostedDate))),
+      j => [j.Id, j.LastUpdateDate, j.PostedDate, j.Title, j.PrimaryLocation], async j => {
       const url = new URL(`${base}/recruitingCEJobRequisitionDetails`);
       url.search = new URLSearchParams({ onlyData: "true", finder: `ById;Id=${j.Id}` }).toString();
       const d = (await fetchJson(url.toString())).items?.[0];
@@ -182,7 +189,8 @@ export async function smartrecruiters(source: SourceRecord, account: string): Pr
   for (let offset = 0; offset < 10000; offset += 100) {
     const data = await fetchJson(`${base}?limit=100&offset=${offset}`);
     if (!Array.isArray(data.content)) throw new Error("SmartRecruiters 返回结构已变更");
-    jobs.push(...await mapPool<any, JobRecord>(data.content.filter((j: any) => selection.accept(iso(j.releasedDate))), async j => {
+    jobs.push(...await mapDetails<any, JobRecord>(data.content.filter((j: any) => selection.accept(iso(j.releasedDate))),
+      j => [j.id, j.updatedOn, j.releasedDate, j.name, j.location], async j => {
       const d = await fetchJson(`${base}/${j.id}`);
       const url = d.postingUrl || `https://jobs.smartrecruiters.com/${account}/${j.id}`;
       const sections = Object.values(d.jobAd?.sections ?? {}) as any[];

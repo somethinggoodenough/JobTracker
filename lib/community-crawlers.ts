@@ -1,5 +1,6 @@
 import type { CrawlBatch, JobRecord, SourceRecord } from "./job-types";
-import { clean, fetchSource, mapPool, stripHtml } from "./crawler-http";
+import { clean, fetchSource, stripHtml } from "./crawler-http";
+import { mapDetails } from "./detail-cache";
 import { UNKNOWN_DATE_LIMIT, isCrawlCandidate } from "./crawl-policy";
 import { throwIfSyncCancelled } from "./sync-control";
 
@@ -108,7 +109,6 @@ async function atsDetail(listing: Listing): Promise<JobRecord | null> {
     postedAt = clean(detail.published || detail.published_at) || null;
   } else throw new Error("原始申请网站尚无单岗位详情适配器，且没有可用的 Simplify 详情");
   if (!description) throw new Error("原始网站未提供完整 JD");
-  if (!isCrawlCandidate(postedAt)) return null;
   return { externalId: listing.id, company: listing.company, title: clean(detail.title || detail.text) || listing.title, canonicalUrl: listing.url, applyUrl: listing.url, location, description, postedAt };
 }
 
@@ -123,7 +123,8 @@ export async function githubJobs(source: SourceRecord): Promise<CrawlBatch> {
   const selected = await selectedListings(source);
   const warnings = ["社区列表日期仅用于排序，不作为公司发布日期；按发布日期未知规则取收录时间最新的前 50 条，再获取真实 JD。"];
   const failures: string[] = []; let resolved = 0, closed = 0;
-  const results = await mapPool<Listing, JobRecord | null>(selected, async listing => {
+  const results = await mapDetails<Listing, JobRecord | null>(selected,
+    listing => [listing.id, null, listing.url, listing.title, listing.location, listing.company, listing.simplifyId], async listing => {
     try {
       let job: JobRecord | null;
       if (listing.simplifyId) {
@@ -134,12 +135,13 @@ export async function githubJobs(source: SourceRecord): Promise<CrawlBatch> {
           catch (fallback) { throw new Error(`Simplify：${error instanceof Error ? error.message : "详情失败"}；原网站：${fallback instanceof Error ? fallback.message : "详情失败"}`); }
         }
       } else job = await atsDetail(listing);
-      resolved++; if (!job) closed++;
       return job;
     } catch (error) { throwIfSyncCancelled(); failures.push(`${listing.company} / ${listing.title}：${error instanceof Error ? error.message : "详情读取失败"}`); return null; }
   });
+  resolved = selected.length - failures.length;
+  closed = results.filter(job => !job || !isCrawlCandidate(job.postedAt)).length - failures.length;
   if (selected.length && !resolved) throw new Error(`GitHub 列表可读，但 ${selected.length} 条详情均未完成：${failures.slice(0, 2).join("；")}`);
   if (failures.length) warnings.push(`详情部分完成：${selected.length} 条中 ${failures.length} 条失败或缺少完整 JD，已跳过。${failures.slice(0, 3).join("；")}`);
   if (closed) warnings.push(`${closed} 条已关闭或原网站日期不在纽约当天，已跳过。`);
-  return Object.assign(results.filter((job): job is JobRecord => job !== null), { warnings });
+  return Object.assign(results.filter((job): job is JobRecord => !!job && isCrawlCandidate(job.postedAt)), { warnings });
 }

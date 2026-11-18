@@ -78,6 +78,13 @@
       "when": 1794997584207,
       "tag": "0010_fearless_inertia",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1795036379835,
+      "tag": "0011_puzzling_living_lightning",
+      "breakpoints": true
     }
   ]
 }

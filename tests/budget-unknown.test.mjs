@@ -10,7 +10,7 @@ const {createPostingSelection,selectPostingRows}=loadLocalTypeScript('lib/crawl-
 const {createJobClassifier,AwaitingClassification}=loadLocalTypeScript('lib/job-classifier.ts');
 const {localShortlist}=loadLocalTypeScript('lib/local-shortlist.ts');
 const {upsertJob}=loadLocalTypeScript('lib/job-storage.ts');
-const {reviewCurrentCandidate}=loadLocalTypeScript('lib/job-candidates.ts');
+const {claimCandidate,reviewCurrentCandidate}=loadLocalTypeScript('lib/job-candidates.ts');
 function database(){
  const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');
  for(const name of fs.readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())sqlite.exec(fs.readFileSync('drizzle/'+name,'utf8'));
@@ -22,6 +22,20 @@ const job={externalId:'one',company:'Example',title:'Backend Engineer Intern',lo
 const decision={accepted:true,categories:['backend_distributed'],careerLevel:'internship',countries:['US'],techStack:[{name:'Python',evidence:'with Python'}],roleEvidence:'Backend services',levelEvidence:'Internship',locationEvidence:'New York, US',reason:'工程实习'};
 const config={apiKey:'test-only-secret',model:'deepseek-flash'};
 const result=value=>Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(value)}}],usage:{prompt_tokens:100,completion_tokens:20}});
+test('Parallel consumers claim each due candidate once, ordered by priority', async () => {
+  const {db,sqlite}=database();
+  try {
+    sqlite.prepare('INSERT INTO sources(name,url) VALUES(?,?)').run(source.name,source.url);
+    const add=sqlite.prepare(`INSERT INTO job_candidates(source_id,canonical_url,dedupe_key,content_hash,payload_json,
+      priority,first_seen_at,last_seen_at,expires_at,next_retry_at) VALUES(1,?,?,'hash','{}',?,'2026-11-18','2026-11-18','2026-11-25',?)`);
+    add.run('first','1',60,'2026-11-18');
+    add.run('second','2',100,'2026-11-18');
+    add.run('delayed','3',100,'2026-11-20');
+    const claimed=await Promise.all(Array.from({length:4},()=>claimCandidate(db,7,'2026-11-19')));
+    assert.deepEqual(claimed.map(row=>row?.id??null),[2,1,null,null]);
+    assert.equal((await claimCandidate(db,7,'2026-11-20')).id,3);
+  } finally {sqlite.close();}
+});
 test('Unknown date limit is fifty per source across pages; known dates still use today',()=>{
  const window=dayWindow(new Date('2026-11-17T12:00Z'));
  withCrawlWindow(window,()=>{const selector=createPostingSelection();let n=0;for(let page=0;page<8;page++)for(let row=0;row<10;row++)if(selector.accept(null))n++;assert.equal(n,50);assert(selector.stop(Array(10).fill(null)));assert(selector.accept('2026-11-17'));assert(!selector.accept('2026-11-16'));const selected=selectPostingRows([...Array(80).fill(null),'2026-11-17','2026-11-16'],date=>date);assert.equal(selected.length,51);});

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { DEFAULT_DAILY_AI_LIMIT } from "../lib/ai-settings";
 
 export const sources = sqliteTable("sources", {
@@ -35,6 +35,7 @@ export const jobs = sqliteTable("jobs", {
   aiAnalysis: text("ai_analysis"),
   aiModel: text("ai_model"),
   aiReviewedAt: text("ai_reviewed_at"),
+  crawlHash: text("crawl_hash"),
   firstSeenAt: text("first_seen_at").notNull(),
   lastSeenAt: text("last_seen_at").notNull(),
   updatedAt: text("updated_at").notNull(),
@@ -81,6 +82,7 @@ export const scrapeSourceProgress = sqliteTable("scrape_source_progress", {
   jobsIgnored: integer("jobs_ignored").notNull().default(0),
   jobsQueued: integer("jobs_queued").notNull().default(0),
   error: text("error"),
+  metricsJson: text("metrics_json"),
 }, (table) => [uniqueIndex("scrape_source_progress_run_source_idx").on(table.runId, table.sourceId)]);
 
 // Deliberately independent of jobs/sources: a saved application outlives crawl retention.
@@ -189,5 +191,15 @@ export const jobCandidates = sqliteTable("job_candidates", {
   expiresAt: text("expires_at").notNull(),
   nextRetryAt: text("next_retry_at").notNull(),
   lastError: text("last_error"),
+  claimRunId: integer("claim_run_id"),
 }, table => [uniqueIndex("job_candidates_url_unique").on(table.canonicalUrl),
-  uniqueIndex("job_candidates_dedupe_unique").on(table.dedupeKey),index("job_candidates_expiry_idx").on(table.expiresAt)]);
+  uniqueIndex("job_candidates_dedupe_unique").on(table.dedupeKey),index("job_candidates_expiry_idx").on(table.expiresAt),
+  index("job_candidates_ready_idx").on(table.claimRunId, table.nextRetryAt)]);
+
+export const crawlDetails = sqliteTable("crawl_details", {
+  namespace: text("namespace").notNull(),
+  postingKey: text("posting_key").notNull(),
+  revision: text("revision").notNull(),
+  payload: text("payload").notNull(),
+  expiresAt: integer("expires_at").notNull(),
+}, table => [primaryKey({ columns: [table.namespace, table.postingKey] }), index("crawl_details_expiry_idx").on(table.expiresAt)]);

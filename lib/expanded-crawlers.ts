@@ -1,8 +1,9 @@
 import JSON5 from "json5";
-import { clean, fetchJson, fetchSource, mapPool, stripHtml } from "./crawler-http";
+import { clean, fetchJson, fetchSource, stripHtml } from "./crawler-http";
 import { jobPostingJson, publicDate, requireRows } from "./career-session";
 import { createPostingSelection, isCrawlCandidate } from "./crawl-policy";
 import type { JobRecord, SourceAdapter, SourceRecord } from "./job-types";
+import { mapDetails } from "./detail-cache";
 
 const chinaDate = (v: unknown) => publicDate(typeof v === "string" && /^\d{4}-\d\d-\d\d[ T]\d\d:\d\d/.test(v) && !/(Z|[+-]\d\d:\d\d)$/.test(v) ? v.replace(" ", "T") + "+08:00" : v);
 const jd = (...parts: unknown[]) => {
@@ -34,14 +35,13 @@ export async function eightfoldLegacy(source: SourceRecord, account: string): Pr
     url.search = new URLSearchParams({ domain: account, start: String(start), sort_by: "new" }).toString();
     const data = await fetchJson(url.href), rows = requireRows(data.positions, "Eightfold legacy");
     const selected = rows.filter(() => select.accept(null));
-    jobs.push(...(await mapPool<any, JobRecord | null>(selected, async row => {
+    jobs.push(...(await mapDetails<any, JobRecord>(selected, row => [row.id, row.updatedTs, row.name, row.locations], async row => {
       const url = new URL(`/careers/job/${row.id}`, source.url).href;
       const d = jobPostingJson(await (await fetchSource(url)).text());
       const date = publicDate(d.datePosted);
-      if (!isCrawlCandidate(date)) return null;
       const locations = [d.jobLocation].flat().filter(Boolean).map((l: any) => [l.address?.addressLocality, l.address?.addressRegion, l.address?.addressCountry].filter(Boolean).join(", ")).join(" · ");
       return { ...record(source, row.id, d.title || row.name, url, jd(d.description), locations || (row.locations ?? []).join(" · "), date), employmentType: clean([d.employmentType].flat().join(" · ")) };
-    })).filter((j): j is JobRecord => !!j));
+    })).filter(job => isCrawlCandidate(job.postedAt)));
     start += rows.length;
     if (!rows.length || start >= Number(data.count) || select.stop(rows.map(() => null))) return jobs;
   }
@@ -86,7 +86,8 @@ export async function beisenPb(source: SourceRecord): Promise<JobRecord[]> {
     const data = await request("listPosition", { isFrompb: "true", recruitType: school ? "1" : "2", pageSize: "50", currentPage: String(page) });
     const rows = requireRows(data.pageForm?.pageData, "北森 pb"), date = (j: any) => chinaDate(j.publishFirstDate);
     seen += rows.length;
-    jobs.push(...await mapPool<any, JobRecord>(rows.filter(j => select.accept(date(j))), async j => {
+    jobs.push(...await mapDetails<any, JobRecord>(rows.filter(j => select.accept(date(j))),
+      j => [j.postId, j.lastUpdateDate, j.publishFirstDate, j.postName, j.workPlaceStr], async j => {
       const d = await request("listPositionDetail", { postId: String(j.postId) });
       const url = new URL(`/${su}/pb/posDetail.html?postId=${j.postId}&postType=${school ? "school" : "society"}`, source.url).href;
       return record(source, j.postId, j.postName, url, jd(d.workContent, d.serviceCondition), clean(j.workPlaceStr) || "中国", date(j));
@@ -129,7 +130,8 @@ export async function huawei(source: SourceRecord): Promise<JobRecord[]> {
   for (let page = 1; page <= 200; page++) {
     const data = await request("getJobPage", { curPage: page, pageSize: 10, jobType: "CR", language: "zh_CN" });
     const rows = requireRows(data.result, "华为"), date = (j: any) => chinaDate(j.releaseDate);
-    jobs.push(...await mapPool<any, JobRecord>(rows.filter(j => select.accept(date(j))), async j => {
+    jobs.push(...await mapDetails<any, JobRecord>(rows.filter(j => select.accept(date(j))),
+      j => [j.advertisementId, j.updateTime, j.releaseDate, j.jobName, j.workPlace], async j => {
       const intents = requireRows(await request("getPositionIntentionList", { jobId: j.jobId }), "华为岗位意向");
       const description = jd(...intents.map(d => [d.positionIntention, d.jobResponsibilities, d.jobDemand].filter(Boolean).join("\n")));
       return record(source, j.advertisementId, j.jobName, `https://career.huawei.com/cn/job-details?advertisementId=${j.advertisementId}`, description,
@@ -208,7 +210,7 @@ export async function avature(source: SourceRecord): Promise<JobRecord[]> {
     const key = rows.map(r => r.url).join("|");
     if (key && key === previous) throw new Error("Lenovo 翻页返回重复页面");
     previous = key;
-    jobs.push(...await mapPool(rows.filter(j => select.accept(j.date)), async j => {
+    jobs.push(...await mapDetails(rows.filter(j => select.accept(j.date)), j => [j.url, null, j.date, j.title, j.location], async j => {
       const url = new URL(j.url, source.url).href, html = await (await fetchSource(url)).text();
       const heading = html.indexOf("Description and Requirements");
       if (heading < 0) throw new Error("Lenovo 职位详情缺少职责要求部分");
@@ -234,7 +236,8 @@ export async function phenom(source: SourceRecord): Promise<JobRecord[]> {
     const data = payload.refineSearch;
     if (data?.status !== 200) throw new Error("Cisco Phenom 公开职位接口返回错误");
     const rows = requireRows(data.data?.jobs, "Phenom"), date = (j: any) => publicDate(j.postedDate);
-    jobs.push(...await mapPool<any, JobRecord>(rows.filter(j => select.accept(date(j))), async j => {
+    jobs.push(...await mapDetails<any, JobRecord>(rows.filter(j => select.accept(date(j))),
+      j => [j.jobId || j.reqId, j.updatedDate, j.postedDate, j.title, j.multi_location], async j => {
       const url = new URL(`/global/en/job/${j.jobId || j.reqId}`, source.url).href;
       const html = await (await fetchSource(url)).text();
       const d = jobPostingJson(html);
