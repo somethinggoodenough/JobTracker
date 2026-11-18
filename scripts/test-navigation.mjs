@@ -62,8 +62,9 @@ try{
  console.log('Desktop applications navigation OK');
  await clickLink('/');await until('location.pathname==="/" && !!document.querySelector("main h1") && !document.querySelector("main .animate-pulse")','back to jobs');
  console.log('Desktop return to jobs OK');
- for(const href of ['/sources','/runs']){
+ for(const href of ['/resumes','/sources','/runs']){
   await clickLink(href);await until(`location.pathname===${JSON.stringify(href)} && document.readyState==="complete"`,'directory '+href);
+  if(href==='/resumes')await until(`document.querySelector('main h1')?.textContent==='简历管理' && !!document.querySelector('input[aria-label="搜索简历"]')`,'resume directory');
  }
  await clickLink('/');await until('location.pathname==="/" && !!document.querySelector("main h1") && !document.querySelector("main .animate-pulse")','return from other pages');
  await page('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});

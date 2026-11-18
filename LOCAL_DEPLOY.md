@@ -31,7 +31,7 @@ npm ci
 npm run build
 ```
 
-仅在空数据库上，依次执行以下七条迁移。已有数据库不要重复执行已应用的迁移。
+仅在空数据库上，依次执行以下八条迁移。已有数据库不要重复执行已应用的迁移。
 
 ```powershell
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_complete_stephen_strange.sql
@@ -41,6 +41,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0004_thin_boomerang.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0005_workable_franklin_richards.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0006_talented_sally_floyd.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0007_stale_liz_osborn.sql
 ```
 
 启动服务器并保持这个终端运行：
@@ -71,6 +72,7 @@ npm run scheduler -- --port 4173
 
 - app/job-radar.tsx：前端看板及实时同步进度。
 - app/application-tracker.tsx：申请列表、资料编辑和状态时间线。
+- app/resume-manager.tsx、lib/resumes.ts：简历管理界面、本地数据读写与版本检查。
 - app/api/：职位、来源、同步与进度 API。
 - lib/crawler.ts：Greenhouse、Ashby、Lever、Workday、Workable 和通用网页适配器。
 - lib/company-crawlers.ts：Amazon/AWS、Google/DeepMind、腾讯、Eightfold（Microsoft/Qualcomm）、AMD Jibe、Oracle Fusion、SmartRecruiters、Apple、Ayar Labs Paycor、VAST Data Comeet 专用逻辑。
@@ -86,9 +88,17 @@ npm run scheduler -- --port 4173
 源码包不包含 node_modules、构建产物、现有数据库、环境变量或密钥。
 如需迁移现有职位数据，先停止服务器和调度器，再单独备份并复制 .wrangler/state/ 到新项目相同位置；不要对复制过来的数据库重新应用已执行过的迁移。
 
-有日期时只抓纽约时间当天发布的职位；日期缺失或只有更新时间时，每个来源取前 50 条，标注“发布日期未知”，按首次发现时间保留 7 天。前 50 条按网站返回顺序，不保证是最新发布；未知日期不计入今日发布。重复抓取不延长期限。当前电脑已应用至 `0005` 迁移，无需重复执行；升级旧副本时只补执行未应用的迁移。
+有日期时只抓纽约时间当天发布的职位；日期缺失或只有更新时间时，每个来源取前 50 条，标注“发布日期未知”，按首次发现时间保留 7 天。前 50 条按网站返回顺序，不保证是最新发布；未知日期不计入今日发布。重复抓取不延长期限。升级旧副本时只补执行未应用的迁移。
 
-左侧目录包含全部职位（7 天）、申请职位状态、招聘来源和同步记录，窄屏使用顶部目录。职位列表每页 50 条，支持翻页、页码跳转和跨页搜索。旧 `/today` 地址跳转到 `/applications`。
+左侧目录包含全部职位（7 天）、申请职位状态、简历管理、招聘来源和同步记录，窄屏使用顶部目录。职位列表每页 50 条，支持翻页、页码跳转和跨页搜索。旧 `/today` 地址跳转到 `/applications`。
+
+## 简历管理
+
+打开 `/resumes` 或左侧“简历管理”，为每个版本填写名称、目标岗位（为哪个岗位准备）、简短说明、创建时间和匹配的技术栈。技术栈用逗号分隔，自动去重；可选保存纯文本简历正文。支持查看、编辑、按元信息搜索、每页 12 份翻页，以及确认后删除。创建时间按纽约时区填写和显示，以 UTC 存储。
+
+简历独立保存在本地 SQLite 的 `resumes` 表，不受职位 7 天清理影响，不调用 DeepSeek。修改和删除会检查版本号，其他窗口已修改时提示刷新。备份请包含 `.wrangler/state/`；本地简历数据和正文不会提交 Git。申请页面中的简历文字说明仍独立保存。
+
+已经应用 `0006` 的旧数据库升级时，停止服务器和调度器、备份数据库，重新构建后只执行上面新增的 `0007_stale_liz_osborn.sql`，再启动服务及调度器。此迁移只新增简历表与索引，保留已有数据。`npm run test:resumes` 验证本地接口和桌面/手机页面，只创建并清理带唯一名称的测试简历，不调用模型。
 
 ## 申请职位状态
 
@@ -112,7 +122,7 @@ npm run scheduler -- --port 4173
 
 `npm run test:ai-settings` 验证保存、刷新、手机端、暂停和不限模式，会恢复测试前的额度；需要本地网站运行且同步空闲，验证期间应停止独立调度器。测试会在 AI 暂停时执行一次待审队列的本地规则/缓存检查，不会调用付费模型。
 
-从已有版本升级时，停止服务、备份本地数据库，重新构建后只执行新增的 `0006_talented_sally_floyd.sql`，不要重复运行旧迁移。该迁移保留职位、申请记录及历史用量，并新增额度配置和粗筛统计字段。有发布日期仍只抓纽约当天；无发布日期仍每个来源最多前 50 条。
+如果旧数据库尚未应用 `0006_talented_sally_floyd.sql`，升级时需先补执行该迁移，再执行 `0007`，不要重复运行已应用的迁移。`0006` 保留职位、申请记录及历史用量，并新增额度配置和粗筛统计字段。有发布日期仍只抓纽约当天；无发布日期仍每个来源最多前 50 条。
 
 `job_candidates` 是待审核队列，不在正式职位或搜索结果中显示。有发布日期的候选只在纽约发布当天交给 AI；过日仍未审核的候选会跳过，不占用新一天额度。无发布日期的候选来自每个来源前 50 条，可继续排队，但最多按首次发现保留 7 天。已审核通过的正式职位仍保留 7 天，申请记录和 JD 快照不受影响。额度有限时不能保证所有合格职位都能当天完成；严格预筛也可能漏掉未明确标注初级要求的职位。`job_discoveries` 仅保留身份散列和首次发现时间，防止未知日期职位被反复重抓而续期。
 

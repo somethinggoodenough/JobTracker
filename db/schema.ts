@@ -140,6 +140,20 @@ export const aiDailyBudget = sqliteTable("ai_daily_budget", {
   day: text("day").primaryKey(),
   used: integer("used").notNull().default(0),
 });
+
+// Resume documents are independent of job crawling and its retention policy.
+export const resumes = sqliteTable("resumes", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  targetRole: text("target_role").notNull(),
+  summary: text("summary").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+  techStack: text("tech_stack").notNull().default("[]"),
+  content: text("content").notNull().default(""),
+  version: integer("version").notNull().default(1),
+  recordedAt: text("recorded_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, table => [index("resumes_updated_at_idx").on(table.updatedAt)]);
 export const aiSettings = sqliteTable("ai_settings", {
   id: integer("id").primaryKey(),
   dailyLimit: integer("daily_limit").default(DEFAULT_DAILY_AI_LIMIT),

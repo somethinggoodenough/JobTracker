@@ -18,6 +18,7 @@
   ├─ scrape_source_progress  每个来源的实时进度
   ├─ applications  申请资料与独立保存的职位快照
   ├─ application_events  申请状态时间线
+  ├─ resumes       简历名称、目标岗位、创建时间、技术栈与可选正文
   ├─ job_evaluations  内容指纹与 AI 筛选结果缓存
   └─ ai_usage  模型 token 用量（不含密钥或提示词）
         │
@@ -51,6 +52,8 @@ DELETE FROM jobs WHERE posted_at <= 当前 UTC 时间 - 7 天;
 
 点击职位卡片「＋」可创建申请记录，保存简历名称/版本/链接、邮箱、申请时间、状态及状态时间；简历字段是文字，不上传文件。公司、标题、链接和 JD 保存为快照，原职位过期或来源删除不影响记录。`applications` 使用规范 URL 和职位指纹唯一索引避免重复；`application_events` 记录状态变化，修改当前状态的时间会修正最新事件。修改使用版本号检查，防止多窗口覆盖；申请记录仅由用户主动移除。时间按本机时区显示，以 UTC 存库。
 
+左侧“简历管理”（`/resumes`）支持新增、查看、编辑、搜索和删除简历，每页 12 份。每份记录包含名称、为哪个岗位准备、简短说明、创建时间、技术栈标签，以及可选的纯文本正文。时间按纽约时区填写和显示，以 UTC 存储；技术栈忽略大小写去重。独立的 `resumes` 表保存在同一个本地 SQLite 数据库中，不受职位 7 天清理影响，不调用 AI。列表不返回正文，只有打开编辑时读取；更新与删除使用版本检查，防止多窗口覆盖。申请记录中的简历文字仍可独立填写。备份简历时备份 `.wrangler/state/`，简历数据不会提交 Git。集成验证：`npm run test:resumes`（需先启动本地网站）。
+
 ## 岗位筛选
 
 职位仅在同时满足以下条件后入库和展示：指定的 10 类工程岗位、Internship / New Grad / Junior、中国或美国工作地点。明确资深、明确境外或 JD 缺失的职位先由规则排除；其余使用 DeepSeek 一次完成岗位分类、级别、地点和技术栈提取，并校验结果和原文引文。Junior 定义为明确初级/入门级或最低必需经验为 0–2 年且无资深要求；没有级别证据、国家不明或全球远程但没有明确中美选项时拒绝。模型有误判可能，JD 页保留判断依据以便核对。
@@ -74,6 +77,9 @@ DELETE FROM jobs WHERE posted_at <= 当前 UTC 时间 - 7 天;
 - `POST /api/applications`：传入 `{ "jobId": 123 }` 创建职位快照，重复添加返回已有记录。
 - `GET/PATCH/DELETE /api/applications/:id`：读取资料与时间线、保存资料、移除记录。PATCH 传入 `resume,email,applied_at,status,status_at,version`；日期使用含时区的 ISO 时间，过期版本返回 409。
 - `GET/POST /api/sources`：读取或添加招聘来源。
+- `GET /api/resumes?page=1&q=`：搜索简历名称、目标岗位、说明与技术栈，每页 12 份，不返回正文。
+- `POST /api/resumes`：创建简历，必填 `name,target_role`；可选 `summary,created_at,tech_stack,content`，日期须为含时区的 ISO 时间。
+- `GET/PATCH/DELETE /api/resumes/:id`：读取完整简历、部分修改、删除。PATCH 和 DELETE 必须带 `version`；过期版本返回 409。
 - `DELETE /api/sources/:id`：删除来源及对应职位。
 - `POST /api/sync`：手动执行一次完整同步。
 - `GET /api/sync/progress`：读取来源阶段、耗时、计数及错误；同步长请求用 JSON 空白心跳保持连接。
@@ -115,7 +121,7 @@ node scripts/report-company-adapters.mjs http://127.0.0.1:4173
 
 ## 本地命令
 
-页面目录：`/` 全部职位、`/applications` 申请职位状态、`/sources` 招聘来源、`/runs` 同步记录。旧 `/today` 地址跳转到申请页。桌面显示左侧目录，窄屏显示顶部目录；职位列表支持前后翻页及输入页码跳转。
+页面目录：`/` 全部职位、`/applications` 申请职位状态、`/resumes` 简历管理、`/sources` 招聘来源、`/runs` 同步记录。旧 `/today` 地址跳转到申请页。桌面显示左侧目录，窄屏显示顶部目录；职位列表支持前后翻页及输入页码跳转。
 
 ```bash
 npm run db:generate

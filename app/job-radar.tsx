@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApplicationEditor, ApplicationTracker } from "./application-tracker";
 import AiFilterPanel from "./ai-filter-panel";
+import ResumeManager from "./resume-manager";
 import { ClassificationTags, JobAnalysisPanel } from "@/components/job-classification";
 import { careerLevels, jobCategories, type JobAnalysis } from "@/lib/classification-types";
 import type { FormEvent, ReactNode } from "react";
 import {
   ArrowUpRight, Building2, Check, ChevronRight, Clock3, Database, ExternalLink,
   Globe2, Layers3, MapPin, Plus, Radar, RefreshCw, Search, Settings2, Sparkles,
-  Trash2, X, Zap, ClipboardList,
+  Trash2, X, Zap, ClipboardList, FileText,
 } from "lucide-react";
 
 type Job = {
@@ -22,7 +23,7 @@ type Job = {
 type Source = { id: number; name: string; url: string; adapter: string; enabled: number; job_count: number; last_success_at?: string; last_error?: string };
 type Stats = { total: number; companies: number; new_today: number };
 type Pages = { page: number; pageSize: number; total: number; totalPages: number };
-type View = "jobs" | "applications" | "sources" | "runs";
+type View = "jobs" | "applications" | "resumes" | "sources" | "runs";
 type Run = { status: string; started_at: string; jobs_added: number; jobs_deleted: number } | null;
 type SourceProgress = {
   source_id: number; name: string; url: string; stage: string; started_at: string | null;
@@ -197,7 +198,7 @@ export default function JobRadar({ view = "jobs" }: { view?: View }) {
       <main className="mx-auto max-w-[1500px] px-5 py-7 lg:px-8 lg:py-10">
         {(!!progress?.sources.length || isSyncing) && <SyncProgressPanel progress={progress} syncing={isSyncing} error={progressError} />}
         {notice && <div role="status" className="mb-4 flex items-center justify-between rounded-xl border border-[#c9d8ba] bg-[#eff7df] px-4 py-3 text-sm text-[#36531f]"><span>{notice}</span><button onClick={() => setNotice("")} aria-label="关闭提示"><X size={15} /></button></div>}
-        {view === "sources" ? <SourcesPage sources={sources} onChanged={load} /> : view === "runs" ? <HistoryPanel active={!!runActive} status={progress?.run?.status} /> : view === "applications" ? <ApplicationTracker refreshKey={applicationRefresh} onOpen={setApplicationId} /> : <>
+        {view === "resumes" ? <ResumeManager /> : view === "sources" ? <SourcesPage sources={sources} onChanged={load} /> : view === "runs" ? <HistoryPanel active={!!runActive} status={progress?.run?.status} /> : view === "applications" ? <ApplicationTracker refreshKey={applicationRefresh} onOpen={setApplicationId} /> : <>
         <section className="mb-8 grid gap-5 xl:grid-cols-[1fr_410px]">
           <div>
             <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[.16em] text-[#55715e]"><span className="size-2 rounded-full bg-[#72a34b] shadow-[0_0_0_5px_#dff0bd]" />每小时自动更新</div>
@@ -253,13 +254,14 @@ function Directory({ view, mobile = false }: { view: View; mobile?: boolean }) {
   const links = [
     { view: "jobs", href: "/", label: "全部职位", icon: <Layers3 size={18} /> },
     { view: "applications", href: "/applications", label: "申请职位状态", icon: <ClipboardList size={18} /> },
+    { view: "resumes", href: "/resumes", label: "简历管理", icon: <FileText size={18} /> },
     { view: "sources", href: "/sources", label: "招聘来源", icon: <Globe2 size={18} /> },
     { view: "runs", href: "/runs", label: "同步记录", icon: <Clock3 size={18} /> },
   ];
   return <aside className={mobile ? "border-b border-[#dfe2d8] bg-[#edf0e6] px-3 py-2 md:hidden" : "fixed inset-y-0 left-0 z-40 hidden w-[208px] flex-col border-r border-[#d8ddcf] bg-[#edf0e6] p-5 md:flex"}>
     {!mobile && <><a href="/" className="mb-10 mt-2 flex items-center gap-2 font-semibold text-[#173f2a]"><Radar size={24} />求职雷达</a><p className="eyebrow mb-4">工作空间</p></>}
     {/* Native links avoid the local Vinext client router's failing navigation callback. */}
-    <nav aria-label="主目录" className={mobile ? "grid grid-cols-4 gap-1" : "space-y-2"}>{links.map(link => <a key={link.view} href={link.href} aria-current={view === link.view ? "page" : undefined} className={`flex rounded-xl text-sm transition ${mobile ? "flex-col items-center justify-center gap-1 px-1 py-2 text-xs" : "items-center gap-2 px-3 py-3"} ${view === link.view ? "bg-[#173f2a] font-semibold text-white shadow-sm" : "text-[#61705e] hover:bg-white"}`}>{link.icon}<span>{link.label}</span></a>)}</nav>
+    <nav aria-label="主目录" className={mobile ? "grid grid-cols-5 gap-1" : "space-y-2"}>{links.map(link => <a key={link.view} href={link.href} aria-current={view === link.view ? "page" : undefined} className={`flex rounded-xl text-sm transition ${mobile ? "flex-col items-center justify-center gap-1 px-1 py-2 text-center text-xs" : "items-center gap-2 px-3 py-3"} ${view === link.view ? "bg-[#173f2a] font-semibold text-white shadow-sm" : "text-[#61705e] hover:bg-white"}`}>{link.icon}<span>{link.label}</span></a>)}</nav>
     {!mobile && <div className="mt-auto rounded-2xl border border-[#d8ddcf] bg-white/70 p-4 text-xs leading-6 text-[#6c7866]">每天的新机会<br /><strong className="text-[#294c31]">已知日期抓当天<br />未知日期前 50 条</strong><br />保留 7 天 · 纽约日期</div>}
   </aside>;
 }
