@@ -30,7 +30,11 @@ export function normalizeSource(input: string, requested: SourceAdapter = "auto"
     else if (host.includes("workable.com")) adapter = "workable";
     else if (host.endsWith(".jobs.feishu.cn") || host === "jobs.bytedance.com") adapter = "feishu";
     else if (host.endsWith(".zhiye.com")) adapter = "beisen";
-    else if (host === "app.mokahr.com" && /^\/(?:campus|social)-recruitment\//.test(parsed.pathname)) adapter = "moka";
+    else if ((host === "app.mokahr.com" || host === "recruitment.metax-tech.com") && /^\/(?:(?:campus|social)-recruitment|apply)\//.test(parsed.pathname)) adapter = "moka";
+    else if (host === "www.shlab.org.cn") adapter = "shlab";
+    else if (host === "career.huawei.com") adapter = "huawei";
+    else if (host === "campus.kuaishou.cn") adapter = "kuaishou_campus";
+    else if (host === "hr.pcl.ac.cn" || host === "talents.zhejianglab.com") adapter = "beisen_pb";
     else if (host === "jobs.gem.com") adapter = "gem";
     else if (host === "lifeattiktok.com") adapter = "tiktok";
   }
@@ -268,6 +272,7 @@ async function genericPage(source: SourceRecord): Promise<JobRecord[]> {
 
 async function crawlRaw(source: SourceRecord): Promise<CrawlBatch> {
   const profile = companyProfile(source);
+  if (profile && "unavailableReason" in profile && profile.unavailableReason) throw new Error(profile.unavailableReason);
   if (profile) source = { ...source, url: profile.url, adapter: profile.adapter as SourceAdapter };
   const dedicated = dedicatedAdapters[source.adapter];
   if (dedicated) return dedicated(source, profile && "account" in profile ? profile.account ?? "" : "");

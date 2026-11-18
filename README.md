@@ -125,6 +125,8 @@ Internship / New Grad / Junior 和中美工作地点条件继续保留。明确�
 
 ### 公司专用适配器
 
+中国剩余来源和追加 26 家公司的适配、最新实测状态与限制见 [扩展适配报告](docs/EXPANDED_ADAPTERS.md)。`npm run verify:expanded` 可在本地逐一重新验证，不调用 DeepSeek、不写入职位。新增协议包括华为校园、快手校园、上海 AI 实验室、北森 pb、Netflix legacy、Pinpoint、Lenovo Avature 和 Cisco Phenom。
+
 `lib/company-crawlers.ts` 实现 Amazon/AWS、Google/DeepMind、AMD Jibe/iCIMS、腾讯、Eightfold（Microsoft/Qualcomm）、Oracle Fusion、SmartRecruiters（Arista/ServiceNow/LLNL）、Apple、Ayar Labs Paycor 和 VAST Data Comeet。
 
 `lib/additional-crawlers.ts` 新增飞书招聘、Moka、北森、Gem，以及 Meta、TikTok、Salesforce、阿里、百度、蚂蚁、美团、京东、小米、网易、小红书、快手和 Dify 的公开职位协议。具体公司覆盖范围、实际连通结果和未接通原因见 [本轮适配清单](docs/REQUESTED_ADAPTERS.md)。配置和代码存在不代表当前可用；以本地运行时验证为准。

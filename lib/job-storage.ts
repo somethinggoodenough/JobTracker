@@ -9,10 +9,11 @@ const DAY = 86_400_000;
 const normalize = (value: string | null | undefined) =>
   (value ?? "").toLowerCase().normalize("NFKC").replace(/\s+/g, " ").trim();
 
-function canonicalUrl(value: string) {
+export function canonicalUrl(value: string) {
   try {
     const url = new URL(value);
-    url.hash = "";
+    // Moka and other SPA boards put the posting identity in the route fragment.
+    if (!/^#\/(?:job\/|campus\/)/.test(url.hash)) url.hash = "";
     [...url.searchParams.keys()].forEach((key) => {
       if (/^(utm_|source$|ref$|gh_src$)/i.test(key)) url.searchParams.delete(key);
     });

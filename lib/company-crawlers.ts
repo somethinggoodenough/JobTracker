@@ -1,5 +1,6 @@
 import profiles from "@/data/company-adapters.json";
 import { additionalAdapters } from "./additional-crawlers";
+import { expandedAdapters } from "./expanded-crawlers";
 import { ruleRejection } from "./job-classifier";
 import { throwIfSyncCancelled } from "./sync-control";
 import type { JobRecord, SourceAdapter, SourceRecord } from "./job-types";
@@ -152,7 +153,8 @@ export async function oracle(source: SourceRecord, origin: string): Promise<JobR
   const selection = createPostingSelection();
   for (let offset = 0; offset < 10000; offset += 100) {
     const url = new URL(`${base}/recruitingCEJobRequisitions`);
-    const site = source.name === "Dell" ? "CX_1001" : "CX_1";
+    const profile = companyProfile(source);
+    const site = profile && "site" in profile ? String(profile.site) : source.name === "Dell" ? "CX_1001" : "CX_1";
     url.search = new URLSearchParams({ onlyData: "true", expand: "requisitionList", finder: `findReqs;siteNumber=${site},limit=100,offset=${offset},sortBy=POSTING_DATES_DESC` }).toString();
     const data = (await fetchJson(url.toString())).items?.[0];
     if (!Array.isArray(data?.requisitionList)) throw new Error("Oracle 返回结构已变更");
@@ -161,7 +163,10 @@ export async function oracle(source: SourceRecord, origin: string): Promise<JobR
       url.search = new URLSearchParams({ onlyData: "true", finder: `ById;Id=${j.Id}` }).toString();
       const d = (await fetchJson(url.toString())).items?.[0];
       if (!d?.ExternalDescriptionStr) throw new Error(`Oracle 职位详情缺失：${j.Id}`);
-      const canonical = source.name === "Dell" ? `https://enterpriseplatform.dell.com/hcmUI/CandidateExperience/en/sites/careers/job/${j.Id}` : `https://careers.oracle.com/en/sites/jobsearch/job/${j.Id}`;
+      const board = new URL(source.url);
+      board.pathname = board.pathname.replace(/\/sites\/([^/]+).*$/, `/sites/$1/job/${j.Id}`);
+      board.search = ""; board.hash = "";
+      const canonical = board.href;
       return { externalId: clean(j.Id), company: source.name, title: clean(d.Title), canonicalUrl: canonical, applyUrl: canonical,
         location: clean(d.PrimaryLocation), employmentType: clean(d.JobSchedule), department: clean(d.Category || d.JobFunction),
         workplaceType: clean(d.WorkplaceType), description: stripHtml([d.ExternalDescriptionStr, d.ExternalResponsibilitiesStr, d.ExternalQualificationsStr].filter(Boolean).join("\n")), postedAt: iso(d.ExternalPostedStartDate) };
@@ -264,6 +269,7 @@ export async function comeet(source: SourceRecord): Promise<JobRecord[]> {
 }
 
 export const dedicatedAdapters: Partial<Record<SourceAdapter, (source: SourceRecord, account: string) => Promise<JobRecord[]>>> = {
+  ...expandedAdapters,
   ...additionalAdapters,
   amazon, google, jibe, tencent, eightfold, oracle, smartrecruiters, apple, paycor, comeet,
 };

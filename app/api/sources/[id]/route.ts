@@ -34,8 +34,9 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     return Response.json({ ok: true, empty: !jobs.length, partial: !!warning, warning, id: sourceId, name: source.name, jobs: jobs.length, adapter });
   } catch (error) {
     const message = error instanceof Error ? error.message : "验证失败";
-    await db.prepare("UPDATE sources SET enabled=0,last_error=?1,updated_at=?2 WHERE id=?3")
-      .bind(message.slice(0, 500), new Date().toISOString(), sourceId).run();
+    const profile = companyProfile(source);
+    await db.prepare("UPDATE sources SET enabled=0,last_error=?1,updated_at=?2,url=?4,adapter=?5 WHERE id=?3")
+      .bind(message.slice(0, 500), new Date().toISOString(), sourceId, profile?.url ?? source.url, profile?.adapter ?? source.adapter).run();
     return Response.json({ ok: false, id: sourceId, name: source.name, error: message }, { status: 422 });
   }
 }

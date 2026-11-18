@@ -45,6 +45,8 @@ function relativeTime(date?: string) {
 }
 
 const adapterName: Record<string, string> = {
+  pinpoint: "Pinpoint", eightfold_legacy: "Eightfold / Netflix", avature: "Avature / Lenovo", phenom: "Phenom / Cisco",
+  beisen_pb: "北森 pb", shlab: "上海 AI 实验室", kuaishou_campus: "快手校园", huawei: "华为校园", luchentech: "潞晨官网",
   github_jobs: "GitHub / Simplify 职位列表",
   feishu: "飞书招聘", moka: "Moka", beisen: "北森 / Zhiye", gem: "Gem", salesforce: "Salesforce 专用",
   dify: "Dify 专用", xiaomi: "小米专用", kuaishou: "快手专用", meituan: "美团专用", alibaba: "阿里招聘",
