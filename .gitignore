@@ -30,6 +30,18 @@ yarn-error.log*
 .env*
 .dev.vars*
 *.pem
+!.env.example
+
+# Local database files, backups and runtime logs
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.zip
 
 # Checkout-local tool state
 /.wrangler/

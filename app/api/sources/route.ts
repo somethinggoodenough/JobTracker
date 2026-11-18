@@ -17,13 +17,14 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { name?: string; url?: string; adapter?: SourceAdapter };
+    const payload = await request.json() as { name?: string; url?: string; adapter?: SourceAdapter; enabled?: boolean; lastError?: string };
     const name = payload.name?.trim();
     const inputUrl = payload.url?.trim();
     if (!name || !inputUrl) return Response.json({ error: "公司名称和招聘网站 URL 必填" }, { status: 400 });
     const normalized = normalizeSource(inputUrl, payload.adapter ?? "auto");
-    const result = await getD1().prepare(`INSERT INTO sources (name,url,adapter,enabled,created_at,updated_at)
-      VALUES (?1,?2,?3,1,?4,?4)`).bind(name, normalized.canonicalInput, normalized.adapter, new Date().toISOString()).run();
+    const result = await getD1().prepare(`INSERT INTO sources (name,url,adapter,enabled,last_error,created_at,updated_at)
+      VALUES (?1,?2,?3,?4,?5,?6,?6)`).bind(name, normalized.canonicalInput, normalized.adapter,
+        payload.enabled === false ? 0 : 1, payload.lastError?.slice(0, 500) || null, new Date().toISOString()).run();
     return Response.json({ id: result.meta.last_row_id, adapter: normalized.adapter }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "添加来源失败";

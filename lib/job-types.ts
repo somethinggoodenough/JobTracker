@@ -1,4 +1,7 @@
-export type SourceAdapter = "auto" | "greenhouse" | "lever" | "ashby" | "jsonld";
+export type SourceAdapter = "auto" | "greenhouse" | "lever" | "ashby" | "workday" | "workable" | "jsonld"
+  | "amazon" | "google" | "jibe" | "tencent" | "eightfold" | "oracle" | "smartrecruiters" | "apple" | "paycor" | "comeet"
+  | "feishu" | "salesforce" | "dify" | "xiaomi" | "beisen" | "kuaishou" | "meituan" | "gem"
+  | "alibaba" | "netease" | "xiaohongshu" | "jdcom" | "tiktok" | "meta" | "moka" | "baidu" | "antgroup";
 
 export type JobRecord = {
   externalId: string;
@@ -22,14 +25,17 @@ export type SourceRecord = {
   adapter: SourceAdapter;
 };
 
+export type CrawlBatch = JobRecord[] & { warnings?: string[] };
+
 export type SyncSummary = {
   runId: number;
-  status: "success" | "partial" | "failed";
+  status: "success" | "partial" | "failed" | "cancelled";
   sourcesTotal: number;
   sourcesSucceeded: number;
   jobsSeen: number;
   jobsAdded: number;
   jobsUpdated: number;
   jobsDeleted: number;
+  jobsQueued: number;
   errors: string[];
 };

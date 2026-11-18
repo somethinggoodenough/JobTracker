@@ -8,6 +8,48 @@
       "when": 1794895134279,
       "tag": "0000_complete_stephen_strange",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1794904183692,
+      "tag": "0001_nostalgic_mongoose",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1794949723937,
+      "tag": "0002_third_infant_terrible",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1794952048661,
+      "tag": "0003_chunky_pyro",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1794953893103,
+      "tag": "0004_thin_boomerang",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1794956468845,
+      "tag": "0005_workable_franklin_richards",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1794985409574,
+      "tag": "0006_talented_sally_floyd",
+      "breakpoints": true
     }
   ]
 }

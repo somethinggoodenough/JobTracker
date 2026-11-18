@@ -1,0 +1,1 @@
+ALTER TABLE `jobs` ADD `publication_verified` integer DEFAULT false NOT NULL;
