@@ -13,6 +13,7 @@ const { DeadlineError, withDeadline } = loadLocalTypeScript('lib/deadline.ts');
 const { withSyncSignal } = loadLocalTypeScript('lib/sync-control.ts');
 const { withCrawlWindow } = loadLocalTypeScript('lib/crawl-window.ts');
 const { withScreeningRules } = loadLocalTypeScript('lib/screening-context.ts');
+const { ledger, postingContext } = loadLocalTypeScript('lib/posting-ledger.ts');
 
 export function openDetailStore(filename) {
   const sqlite = new DatabaseSync(filename);
@@ -97,12 +98,15 @@ export function createLocalCrawler({ key, filename, execute = executeCrawl, allo
     let id, metrics, runId;
     try {
       // Bound input before allocating a source slot. Only the authenticated Worker submits tasks.
-      let input = "";
+      const chunks = [];
+      let bytes = 0;
+      if (Number(request.headers["content-length"]) > 1024 * 1024) { send(413, { error: "Local crawler request too large" }); return; }
       for await (const chunk of request) {
-        input += chunk;
-        if (input.length > 25000) throw new Error("Local crawler request too large");
+        bytes += chunk.length;
+        if (bytes > 1024 * 1024) { send(413, { error: "Local crawler request too large" }); return; }
+        chunks.push(chunk);
       }
-      const { source, window, coarse, concurrency, crawlId, deadlineMs } = JSON.parse(input);
+      const { source, window, coarse, concurrency, crawlId, deadlineMs, postingLedger } = JSON.parse(Buffer.concat(chunks, bytes).toString("utf8"));
       if (!validId.test(crawlId) || !Number.isSafeInteger(deadlineMs) || !allow(source)) throw new Error("Invalid local crawl request");
       runId = crawlId.split(":")[0];
       const usage = health(runId);
@@ -119,10 +123,14 @@ export function createLocalCrawler({ key, filename, execute = executeCrawl, allo
         limit = requestLimiter(requestCap);
       }
       const deadline = Math.max(1, deadlineMs - Date.now() - 5000);
+      const context = postingContext(postingLedger?.known, postingLedger?.hasSnapshot);
+      const runCrawl = () => execute(store.db, source, { metrics, limit });
       const jobs = await withCrawlWindow(window, () => withDeadline("本地来源抓取", deadline, controller.signal, signal =>
         withSyncSignal(signal, () => withScreeningRules({ coarse, aiPrompt: "" }, () =>
-          execute(store.db, source, { metrics, limit })))));
-      send(200, { jobs, warnings: jobs.warnings, metrics, heapPeakMb: health(runId).heapPeakMb });
+          postingLedger ? ledger.run(context, runCrawl) : runCrawl()))));
+      const { observed, rowsSeen, pages, scanComplete, untracked } = context;
+      send(200, { jobs, warnings: jobs.warnings, metrics, heapPeakMb: health(runId).heapPeakMb,
+        postingScan: postingLedger ? { observed, rowsSeen, pages, scanComplete, untracked } : undefined });
     } catch (error) {
       const sourceDeadline = error instanceof DeadlineError && error.label === "本地来源抓取";
       if (sourceDeadline && metrics) metrics.deadlineHit = true;

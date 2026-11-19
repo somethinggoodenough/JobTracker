@@ -1,3 +1,4 @@
+import { completePostingScan, ID_SCAN_PAGES, ledger } from "./posting-ledger";
 import JSON5 from "json5";
 import { clean, fetchJson, fetchSource, stripHtml } from "./crawler-http";
 import { jobPostingJson, publicDate, requireRows } from "./career-session";
@@ -19,10 +20,12 @@ const record = (source: SourceRecord, id: unknown, title: unknown, url: string, 
 export async function pinpoint(source: SourceRecord): Promise<JobRecord[]> {
   const data = await fetchJson(new URL("/en/postings.json", source.url).href);
   const select = createPostingSelection();
-  return requireRows(data.data, "Pinpoint").filter(() => select.accept(null)).map(j => ({
+  const selected = requireRows(data.data, "Pinpoint").filter(j => select.accept(publicDate(j.datePosted), j.id));
+  completePostingScan();
+  return selected.map(j => ({
     ...record(source, j.id, j.title, new URL(j.url || j.path, source.url).href,
       jd(j.description, j.key_responsibilities, j.skills_knowledge_expertise, j.benefits),
-      [j.location?.city, j.location?.province, j.location?.name].filter(Boolean).join(" · ") || "未注明"),
+      [j.location?.city, j.location?.province, j.location?.name].filter(Boolean).join(" · ") || "未注明", publicDate(j.datePosted)),
     department: clean(j.job?.department?.name), employmentType: clean(j.employment_type_text), workplaceType: clean(j.workplace_type_text),
   }));
 }
@@ -34,7 +37,7 @@ export async function eightfoldLegacy(source: SourceRecord, account: string): Pr
     const url = new URL("/api/apply/v2/jobs", source.url);
     url.search = new URLSearchParams({ domain: account, start: String(start), sort_by: "new" }).toString();
     const data = await fetchJson(url.href), rows = requireRows(data.positions, "Eightfold legacy");
-    const selected = rows.filter(() => select.accept(null));
+    const selected = rows.filter(j => select.accept(null, j.id));
     jobs.push(...(await mapDetails<any, JobRecord>(selected, row => [row.id, row.updatedTs, row.name, row.locations], async row => {
       const url = new URL(`/careers/job/${row.id}`, source.url).href;
       const d = jobPostingJson(await (await fetchSource(url)).text());
@@ -43,7 +46,8 @@ export async function eightfoldLegacy(source: SourceRecord, account: string): Pr
       return { ...record(source, row.id, d.title || row.name, url, jd(d.description), locations || (row.locations ?? []).join(" · "), date), employmentType: clean([d.employmentType].flat().join(" · ")) };
     })).filter(job => isCrawlCandidate(job.postedAt)));
     start += rows.length;
-    if (!rows.length || start >= Number(data.count) || select.stop(rows.map(() => null))) return jobs;
+    if (!rows.length || start >= Number(data.count)) { completePostingScan(); return jobs; }
+    if (select.stop(rows.map(() => null))) return jobs;
   }
   throw new Error("Eightfold legacy 分页超过上限");
 }
@@ -58,12 +62,13 @@ export async function shlab(source: SourceRecord): Promise<JobRecord[]> {
     const data = await fetchJson(url.href);
     if (data.errno !== 0) throw new Error(`上海人工智能实验室接口错误：${clean(data.errmsg || data.errno)}`);
     const rows = requireRows(data.data?.items, "SHLAB");
-    for (const j of rows) if (select.accept(null)) jobs.push({
+    for (const j of rows) if (select.accept(null, j.id)) jobs.push({
       ...record(source, j.id, j.title, new URL(`/joinus/detail/${j.id}?mode=${mode}`, source.url).href,
         jd(j.description, j.requirement), [j.address?.country?.name?.zh_cn, j.address?.city?.name?.zh_cn].filter(Boolean).join(" · ")),
       employmentType: clean(j.job_recruitment_type?.name?.zh_cn), department: clean(j.job_department?.name),
     });
-    if (!data.data.has_more || !rows.length || select.stop(rows.map(() => null))) return jobs;
+    if (!data.data.has_more || !rows.length) { completePostingScan(); return jobs; }
+    if (select.stop(rows.map(() => null))) return jobs;
     const next = clean(data.data.page_token);
     if (!next || next === token) throw new Error("SHLAB 翻页游标缺失或重复");
     token = next;
@@ -86,14 +91,15 @@ export async function beisenPb(source: SourceRecord): Promise<JobRecord[]> {
     const data = await request("listPosition", { isFrompb: "true", recruitType: school ? "1" : "2", pageSize: "50", currentPage: String(page) });
     const rows = requireRows(data.pageForm?.pageData, "北森 pb"), date = (j: any) => chinaDate(j.publishFirstDate);
     seen += rows.length;
-    jobs.push(...await mapDetails<any, JobRecord>(rows.filter(j => select.accept(date(j))),
+    jobs.push(...await mapDetails<any, JobRecord>(rows.filter(j => select.accept(date(j), j.postId)),
       j => [j.postId, j.lastUpdateDate, j.publishFirstDate, j.postName, j.workPlaceStr], async j => {
       const d = await request("listPositionDetail", { postId: String(j.postId) });
       const url = new URL(`/${su}/pb/posDetail.html?postId=${j.postId}&postType=${school ? "school" : "society"}`, source.url).href;
       return record(source, j.postId, j.postName, url, jd(d.workContent, d.serviceCondition), clean(j.workPlaceStr) || "中国", date(j));
     }));
     // This list does not document posting-date ordering.
-    if (!rows.length || seen >= Number(data.pageForm?.totalSize || data.positonNum) || (select.stop(rows.map(date)) && rows.every(j => !date(j)))) return jobs;
+    if (!rows.length || seen >= Number(data.pageForm?.totalSize || data.positonNum)) { completePostingScan(); return jobs; }
+    if ((select.stop(rows.map(date)) && rows.every(j => !date(j)))) return jobs;
   }
   throw new Error("北森 pb 分页超过上限");
 }
@@ -108,11 +114,12 @@ export async function kuaishouCampus(source: SourceRecord, account: string): Pro
     });
     if (data.code !== 0) throw new Error(`快手校园接口错误：${clean(data.message || data.code)}`);
     const rows = requireRows(data.result?.list, "快手校园"), date = (j: any) => chinaDate(j.releaseTime);
-    for (const j of rows) if (select.accept(date(j))) jobs.push({
+    for (const j of rows) if (select.accept(date(j), j.id)) jobs.push({
       ...record(source, j.id, j.name, `${new URL(source.url).origin}/recruit/campus/e/#/campus/job-info/${j.id}`,
         jd(j.description, j.positionDemand), (j.workLocationDicts ?? []).map((l: any) => l.name).join(" · ") || "中国", date(j)), employmentType: clean(j.positionNatureCode),
     });
-    if (!rows.length || page >= Number(data.result.pages) || data.result.hasNextPage === false || (select.stop(rows.map(date)) && rows.every(j => !date(j)))) return jobs;
+    if (!rows.length || page >= Number(data.result.pages) || data.result.hasNextPage === false) { completePostingScan(); return jobs; }
+    if ((select.stop(rows.map(date)) && rows.every(j => !date(j)))) return jobs;
   }
   throw new Error("快手校园分页超过上限");
 }
@@ -130,14 +137,15 @@ export async function huawei(source: SourceRecord): Promise<JobRecord[]> {
   for (let page = 1; page <= 200; page++) {
     const data = await request("getJobPage", { curPage: page, pageSize: 10, jobType: "CR", language: "zh_CN" });
     const rows = requireRows(data.result, "华为"), date = (j: any) => chinaDate(j.releaseDate);
-    jobs.push(...await mapDetails<any, JobRecord>(rows.filter(j => select.accept(date(j))),
+    jobs.push(...await mapDetails<any, JobRecord>(rows.filter(j => select.accept(date(j), j.advertisementId)),
       j => [j.advertisementId, j.updateTime, j.releaseDate, j.jobName, j.workPlace], async j => {
       const intents = requireRows(await request("getPositionIntentionList", { jobId: j.jobId }), "华为岗位意向");
       const description = jd(...intents.map(d => [d.positionIntention, d.jobResponsibilities, d.jobDemand].filter(Boolean).join("\n")));
       return record(source, j.advertisementId, j.jobName, `https://career.huawei.com/cn/job-details?advertisementId=${j.advertisementId}`, description,
         clean(j.workPlace) || intents.map(d => clean(d.jobPlaceName)).filter(Boolean).join(" · ") || "未注明", date(j));
     }));
-    if (!rows.length || page * 10 >= Number(data.pageVO?.totalRows) || (select.stop(rows.map(date)) && rows.every(j => !date(j)))) return jobs;
+    if (!rows.length || page * 10 >= Number(data.pageVO?.totalRows)) { completePostingScan(); return jobs; }
+    if ((select.stop(rows.map(date)) && rows.every(j => !date(j)))) return jobs;
   }
   throw new Error("华为分页超过上限");
 }
@@ -166,7 +174,9 @@ export async function luchentech(source: SourceRecord): Promise<JobRecord[]> {
   const marker = script.match(/(?:\b(?:var|let|const)\s+|[,;])\w+=(?=\[\{key:)/)?.[0];
   if (!marker) throw new Error("潞晨官网岗位数据入口已改变");
   const select = createPostingSelection();
-  return staticArray(script, marker).filter(() => select.accept(null)).map(j => {
+  const selected = staticArray(script, marker).filter(j => select.accept(null, j.key));
+  completePostingScan();
+  return selected.map(j => {
     const url = new URL(source.url); url.searchParams.set("role", String(j.key));
     return record(source, j.key, j.title, url.href, jd(...[j.responsibilities, j.requirements, j.bonus].map(section => section?.content?.join("\n")), "申请邮箱：resume@hpc-ai.com"));
   });
@@ -210,7 +220,7 @@ export async function avature(source: SourceRecord): Promise<JobRecord[]> {
     const key = rows.map(r => r.url).join("|");
     if (key && key === previous) throw new Error("Lenovo 翻页返回重复页面");
     previous = key;
-    jobs.push(...await mapDetails(rows.filter(j => select.accept(j.date)), j => [j.url, null, j.date, j.title, j.location], async j => {
+    jobs.push(...await mapDetails(rows.filter(j => select.accept(j.date, new URL(j.url, source.url).pathname.split("/").filter(Boolean).at(-1))), j => [j.url, null, j.date, j.title, j.location], async j => {
       const url = new URL(j.url, source.url).href, html = await (await fetchSource(url)).text();
       const heading = html.indexOf("Description and Requirements");
       if (heading < 0) throw new Error("Lenovo 职位详情缺少职责要求部分");
@@ -218,7 +228,8 @@ export async function avature(source: SourceRecord): Promise<JobRecord[]> {
       return record(source, new URL(url).pathname.split("/").filter(Boolean).at(-1), j.title, url, jd(htmlDiv(html, start)), j.location, j.date);
     }));
     // The official jobSort key is the posted-date field.
-    if (!rows.length || rows.length < 10 || select.stop(rows.map(j => j.date))) return jobs;
+    if (!rows.length || rows.length < 10) { completePostingScan(); return jobs; }
+    if (select.stop(rows.map(j => j.date))) return jobs;
     offset += rows.length;
   }
   throw new Error("Lenovo 分页超过上限");
@@ -236,7 +247,7 @@ export async function phenom(source: SourceRecord): Promise<JobRecord[]> {
     const data = payload.refineSearch;
     if (data?.status !== 200) throw new Error("Cisco Phenom 公开职位接口返回错误");
     const rows = requireRows(data.data?.jobs, "Phenom"), date = (j: any) => publicDate(j.postedDate);
-    jobs.push(...await mapDetails<any, JobRecord>(rows.filter(j => select.accept(date(j))),
+    jobs.push(...await mapDetails<any, JobRecord>(rows.filter(j => select.accept(date(j), j.jobId || j.reqId)),
       j => [j.jobId || j.reqId, j.updatedDate, j.postedDate, j.title, j.multi_location], async j => {
       const url = new URL(`/global/en/job/${j.jobId || j.reqId}`, source.url).href;
       const html = await (await fetchSource(url)).text();
@@ -247,30 +258,43 @@ export async function phenom(source: SourceRecord): Promise<JobRecord[]> {
     }));
     from += rows.length;
     // Phenom search is relevance ordered, so never stop at a page of old dates.
-    if (!rows.length || from >= Number(data.totalHits) || (select.stop(rows.map(date)) && rows.every(j => !date(j)))) return jobs;
+    if (!rows.length || from >= Number(data.totalHits)) { completePostingScan(); return jobs; }
+    if ((select.stop(rows.map(date)) && rows.every(j => !date(j)))) return jobs;
   }
   throw new Error("Cisco Phenom 分页超过上限");
 }
 
 export async function bossCampus(source: SourceRecord, account: string): Promise<JobRecord[]> {
   if (!account) throw new Error("BOSS 公司校招需要配置当前官方招聘页面编号");
-  const data = await fetchJson("https://www.zhipin.com/wapi/zpxzats/geek/h5/volunteer/getJobList4Page", {
-    method: "POST", headers: { "content-type": "application/json", origin: "https://www.zhipin.com", referer: source.url },
-    body: JSON.stringify({ encryptPageId: account, encryptOrgId: "", showSelector: true, showJobList: true, page: 1, pageSize: 50,
-      advertSource: "99", jobCategoryList: [], cityList: [], labelIdList4And: [[], []], jobName: "", showOnline: true }),
-  });
-  if (data.code !== 0) throw new Error(`BOSS 公司校招接口错误：${clean(data.message || data.code)}`);
-  const select = createPostingSelection();
-  const categories = Array.isArray(data.zpData?.jobLabelAllList) ? data.zpData.jobLabelAllList : [];
-  const typeCategory = categories.find((c: any) => c.name === "招聘类型");
-  const labels = new Map((typeCategory?.children ?? []).map((label: any) => [Number(label.id), clean(label.name)]));
-  return requireRows(data.zpData?.geekVolunteerVOS, "BOSS 公司校招").filter(() => select.accept(null)).map(j => {
-    if (!j.url) throw new Error("BOSS 公司职位缺少官方详情链接");
-    const url = new URL(j.url, source.url).href;
-    const type = (j.jobLabelIdList ?? []).filter((pair: any) => Array.isArray(pair) && Number(pair[0]) === Number(typeCategory?.id)).map((pair: any) => labels.get(Number(pair[1]))).filter(Boolean).join(" · ") || "校园招聘";
-    return { ...record(source, j.encryptJobId, j.jobName, url, jd(`招聘类别：${type}`, j.postDescription, j.degreeValue), clean(j.addressName)),
-      company: clean(j.orgName) || "BOSS直聘", employmentType: type };
-  });
+  const select = createPostingSelection(), jobs: JobRecord[] = [];
+  let previous = "";
+  for (let page = 1; page <= (ledger.getStore() ? ID_SCAN_PAGES : 1); page++) {
+    const data = await fetchJson("https://www.zhipin.com/wapi/zpxzats/geek/h5/volunteer/getJobList4Page", {
+      method: "POST", headers: { "content-type": "application/json", origin: "https://www.zhipin.com", referer: source.url },
+      body: JSON.stringify({ encryptPageId: account, encryptOrgId: "", showSelector: true, showJobList: true, page, pageSize: 50,
+        advertSource: "99", jobCategoryList: [], cityList: [], labelIdList4And: [[], []], jobName: "", showOnline: true }),
+    });
+    if (data.code !== 0) throw new Error(`BOSS 公司校招接口错误：${clean(data.message || data.code)}`);
+    const categories = Array.isArray(data.zpData?.jobLabelAllList) ? data.zpData.jobLabelAllList : [];
+    const typeCategory = categories.find((c: any) => c.name === "招聘类型");
+    const labels = new Map((typeCategory?.children ?? []).map((label: any) => [Number(label.id), clean(label.name)]));
+    const rows = requireRows(data.zpData?.geekVolunteerVOS, "BOSS 公司校招");
+    const signature = rows.map(row => clean(row.encryptJobId)).join("|");
+    if (rows.length && signature === previous) break;
+    previous = signature;
+    for (const j of rows) {
+      if (!select.accept(null, j.encryptJobId)) continue;
+      if (!j.url) throw new Error("BOSS 公司职位缺少官方详情链接");
+      const url = new URL(j.url, source.url).href;
+      const type = (j.jobLabelIdList ?? []).filter((pair: any) => Array.isArray(pair) && Number(pair[0]) === Number(typeCategory?.id))
+        .map((pair: any) => labels.get(Number(pair[1]))).filter(Boolean).join(" · ") || "校园招聘";
+      jobs.push({ ...record(source, j.encryptJobId, j.jobName, url, jd(`招聘类别：${type}`, j.postDescription, j.degreeValue), clean(j.addressName)),
+        company: clean(j.orgName) || "BOSS直聘", employmentType: type });
+    }
+    if (rows.length < 50 || data.zpData?.hasMore === false) { completePostingScan(); break; }
+    if (select.stop(rows.map(() => null))) break;
+  }
+  return jobs;
 }
 
 export const expandedAdapters: Partial<Record<SourceAdapter, (s: SourceRecord, account: string) => Promise<JobRecord[]>>> = {

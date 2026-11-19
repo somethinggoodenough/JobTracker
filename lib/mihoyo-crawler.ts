@@ -1,5 +1,6 @@
 import { clean, fetchJson, stripHtml } from "./crawler-http";
-import { UNKNOWN_DATE_LIMIT } from "./crawl-policy";
+import { createPostingSelection, UNKNOWN_DATE_LIMIT } from "./crawl-policy";
+import { completePostingScan, ID_SCAN_PAGES, ledger } from "./posting-ledger";
 import { mapDetails } from "./detail-cache";
 import type { CrawlBatch, JobRecord, SourceRecord } from "./job-types";
 import { throwIfSyncCancelled } from "./sync-control";
@@ -39,19 +40,22 @@ export async function mihoyo(source: SourceRecord): Promise<CrawlBatch> {
   const board = mihoyoBoard(new URL(source.url));
   if (!board) throw new Error("米哈游适配器仅支持官方招聘网站");
   const hireType = board.endsWith(campus) ? 1 : 0;
-  const listing = await requestJobs("list", hireType, { pageNo: 1, pageSize: UNKNOWN_DATE_LIMIT });
-  const { list, total } = listing?.data ?? {};
-  if (listing?.code !== 0 || !Array.isArray(list) || !Number.isSafeInteger(total) || total < 0
-    || list.length < Math.min(total, UNKNOWN_DATE_LIMIT)) {
-    throw new Error("米哈游职位列表响应异常或分页不完整");
-  }
-
-  // The public list and detail omit a publication date. Keep the board's order.
+  const pageSize = UNKNOWN_DATE_LIMIT, selection = createPostingSelection();
   const unique = new Map<string, Posting>();
-  for (const row of list.slice(0, UNKNOWN_DATE_LIMIT)) {
-    const id = postingId(row?.id);
-    if (!id || typeof row.title !== "string" || !row.title.trim()) throw new Error("米哈游职位列表缺少有效编号或标题");
-    if (!unique.has(id)) unique.set(id, row);
+  for (let pageNo = 1; pageNo <= (ledger.getStore() ? ID_SCAN_PAGES : 1); pageNo++) {
+    const listing = await requestJobs("list", hireType, { pageNo, pageSize });
+    const { list, total } = listing?.data ?? {};
+    if (listing?.code !== 0 || !Array.isArray(list) || !Number.isSafeInteger(total) || total < 0
+      || list.length < Math.min(Math.max(0, total - (pageNo - 1) * pageSize), pageSize)) {
+      throw new Error("米哈游职位列表响应异常或分页不完整");
+    }
+    for (const row of list) {
+      const id = postingId(row?.id);
+      if (!id || typeof row.title !== "string" || !row.title.trim()) throw new Error("米哈游职位列表缺少有效编号或标题");
+      if (selection.accept(null, id)) unique.set(id, row);
+    }
+    if (pageNo * pageSize >= total || !list.length) { completePostingScan(); break; }
+    if (selection.stop(list.map(() => null))) break;
   }
   const failures: string[] = [];
   const details = await mapDetails([...unique.values()], row => [

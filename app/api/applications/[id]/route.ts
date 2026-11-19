@@ -2,6 +2,7 @@ import { getD1 } from "@/lib/database";
 import { applicationDetail, applicationError } from "@/lib/applications";
 import { applicationInput, positiveId, type ApplicationRecord } from "@/lib/application-types";
 import { selectedApplicationResume } from "@/lib/application-resume";
+import { interviewPlannerStatements } from "@/lib/planner-workflow";
 
 type Context = { params: Promise<{ id: string }> };
 export const dynamic = "force-dynamic";
@@ -32,6 +33,7 @@ export async function PATCH(request: Request, context: Context) {
     if (previous.status !== input.status) {
       statements.push(db.prepare(`INSERT INTO application_events (application_id,status,reached_at,recorded_at)
         SELECT id,status,status_at,?2 FROM applications WHERE id=?1 AND mutation_token=?3`).bind(id, now, token));
+      if (input.status === "interview") statements.push(...interviewPlannerStatements(db, id, new Date(now), token, input.statusAt));
     } else if (previous.status_at !== input.statusAt) {
       statements.push(db.prepare(`UPDATE application_events SET reached_at=?2,recorded_at=?3
         WHERE id=(SELECT MAX(id) FROM application_events WHERE application_id=?1)

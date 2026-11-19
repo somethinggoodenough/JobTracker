@@ -47,6 +47,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0010_fearless_inertia.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0011_puzzling_living_lightning.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0012_workday_cooldown.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0013_planner_posting_freshness.sql
 ```
 
 启动服务器并保持这个终端运行：
@@ -93,11 +94,13 @@ npm run scheduler -- --port 4173
 源码包不包含 node_modules、构建产物、现有数据库、环境变量或密钥。
 如需迁移现有职位数据，先停止服务器和调度器，再单独备份并复制 .wrangler/state/ 到新项目相同位置；不要对复制过来的数据库重新应用已执行过的迁移。
 
-有日期时只抓纽约时间当天发布的职位；日期缺失或只有更新时间时，每个来源取前 50 条，标注“发布日期未知”，按首次发现时间保留 7 天。前 50 条按网站返回顺序，不保证是最新发布；未知日期不计入今日发布。重复抓取不延长期限。升级旧副本时只补执行未应用的迁移。
+有日期时只纳入纽约当天发布的职位。无日期列表最多扫描 300 个职位编号或 20 页，并按官网顺序选取最多 50 条新遇到的职位获取详情。无日期职位按首次发现时间保留 7 天，只有确认新出现的职位才计入今日新增。升级旧副本时只补执行未应用的迁移。
 
 左侧目录包含全部职位（7 天）、申请职位状态、简历管理、招聘来源和同步记录，窄屏使用顶部目录。职位列表每页 50 条，支持翻页、页码跳转和跨页搜索。旧 `/today` 地址跳转到 `/applications`。
 
 首页可按雇主所属国家筛选中国公司或美国公司，并与工作地点及关键词叠加。雇主名称、别名和公司来源名称的归类在 `data/company-countries.json` 中维护。未归类的雇主可在「全部公司」中查找。
+
+`0013_planner_posting_freshness.sql` 新增计划表和职位 ID 账本。迁移后的首次同步回填已有职位并建立各来源基线。下次有效快照才可用于无日期职位的对比。首页可以用「包含存量」显示基线职位。计划位于左侧「计划」，推荐、每日任务、记录、复习和每周回顾在本机数据库运行。三项 AI 操作只在点击时消耗现有 DeepSeek 每日额度。
 
 ## 简历管理
 

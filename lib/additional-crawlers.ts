@@ -1,6 +1,7 @@
 import type { JobRecord, SourceAdapter, SourceRecord } from "./job-types";
 import { clean, fetchJson, fetchSource, mapPool, stripHtml } from "./crawler-http";
 import { createPostingSelection, selectPostingRows } from "./crawl-policy";
+import { completePostingScan, ID_SCAN_PAGES, ledger } from "./posting-ledger";
 import { careerSession, jobPostingJson, publicDate as date, requireRows } from "./career-session";
 import { createDecipheriv } from "node:crypto";
 import { currentScreeningRules } from "./screening-context";
@@ -27,7 +28,7 @@ export async function feishu(source: SourceRecord, account: string): Promise<Job
     const data = await (await session.fetch(`${origin}/api/v1/search/job/posts`, { ...jsonPost(body), headers })).json() as any;
     if (data.code !== 0) throw new Error(`飞书招聘接口错误：${clean(data.message || data.code)}`);
     const rows = requireRows(data.data?.job_post_list, "飞书招聘");
-    for (const row of rows) if (selection.accept(date(row.publish_time))) {
+    for (const row of rows) if (selection.accept(date(row.publish_time), row.id)) {
       const prefix = new URL(source.url).pathname.split("/position")[0].replace(/\/$/, "");
       const url = `${origin}${prefix}/position/${encodeURIComponent(row.id)}/detail`;
       const type = [row.recruit_type?.parent?.name, row.recruit_type?.name || row.recruit_type?.en_name].filter(Boolean).join(" · ");
@@ -36,7 +37,8 @@ export async function feishu(source: SourceRecord, account: string): Promise<Job
         employmentType: type, department: clean(row.job_function?.name || row.job_category?.name),
         description: jd(type && `招聘类别：${type}`, content(row.description, row.requirement)), postedAt: date(row.publish_time) });
     }
-    if (!rows.length || offset + rows.length >= Number(data.data.count ?? data.data.total ?? Infinity) || rows.length < 50 || selection.stop(rows.map(r => date(r.publish_time)))) return ensureJd(jobs);
+    if (!rows.length || offset + rows.length >= Number(data.data.count ?? data.data.total ?? Infinity) || rows.length < 50) { completePostingScan(); return ensureJd(jobs); }
+    if (selection.stop(rows.map(r => date(r.publish_time)))) return ensureJd(jobs);
   }
   throw new Error("飞书招聘分页超过 10000 条，请缩小范围");
 }
@@ -47,7 +49,7 @@ export async function salesforce(source: SourceRecord): Promise<JobRecord[]> {
     const data = await fetchJson(`https://a.sfdcstatic.com/digital/xsf/careers/prod/jobs_${page}.json`);
     const rows = requireRows(data.Report_Entry, "Salesforce"), total = Number(data.Total_Jobs);
     if (!Number.isFinite(total)) throw new Error("Salesforce 缺少总职位数");
-    const selected = rows.filter(row => selection.accept(date(row.External_Job_Posting_Start_Date))
+    const selected = rows.filter(row => selection.accept(date(row.External_Job_Posting_Start_Date), row.Job_Requisition_Ref_ID)
       && (!currentScreeningRules().coarse.rejectForeignLocations || !row.Countries?.length || row.Countries.some((c: string) => /United States|China|\bUSA?\b|中国|美国/i.test(c))));
     jobs.push(...await mapPool(selected, async row => {
       let description = row.Job_Description;
@@ -65,7 +67,8 @@ export async function salesforce(source: SourceRecord): Promise<JobRecord[]> {
       description: jd(description), postedAt: date(row.External_Job_Posting_Start_Date) };
     }, 1));
     seen += rows.length;
-    if (seen >= total) return ensureJd(jobs);
+    if (seen >= total) { completePostingScan(); return ensureJd(jobs); }
+    if (ledger.getStore() && selection.stop(rows.map(row => date(row.External_Job_Posting_Start_Date)), true)) return ensureJd(jobs);
     if (!rows.length) throw new Error("Salesforce 分页提前为空，数据未取全");
   }
   throw new Error("Salesforce 分页超过上限");
@@ -74,11 +77,13 @@ export async function salesforce(source: SourceRecord): Promise<JobRecord[]> {
 export async function dify(source: SourceRecord): Promise<JobRecord[]> {
   const data = await fetchJson("https://qcnurokxgtyuimuixztr.supabase.co/functions/v1/public-jobs?lang=en");
   // CMS creation/update timestamps are not claimed as publication dates.
-  return ensureJd(selectPostingRows(requireRows(data.jobs, "Dify"), () => null).map(row => {
+  const selected = selectPostingRows(requireRows(data.jobs, "Dify"), row => date(row.updated_at || row.created_at), row => row.id, () => "updated");
+  completePostingScan();
+  return ensureJd(selected.map(row => {
     const url = `https://join.dify.ai/apply.html?role=${encodeURIComponent(clean(row.title))}`;
     return { externalId: clean(row.id), company: source.name, title: clean(row.title), canonicalUrl: url, applyUrl: url,
       location: clean(row.location), employmentType: clean(row.employment_type), department: clean(row.department), workplaceType: clean(row.work_site),
-      description: jd(row.employment_type, row.seniority, content(row.content), row.benefits), postedAt: null };
+      description: jd(row.employment_type, row.seniority, content(row.content), row.benefits), postedAt: date(row.updated_at || row.created_at), dateKind: "updated" };
   }));
 }
 
@@ -88,11 +93,12 @@ export async function xiaomi(source: SourceRecord): Promise<JobRecord[]> {
     const data = await fetchJson(`https://hr.xiaomi.com/website/api/agent/searchJobPage?keyword=&cityZhNames=&pageSize=100&pageNum=${page}`);
     if (data.code !== 0) throw new Error(`小米招聘接口错误：${clean(data.message || data.code)}`);
     return { rows: requireRows(data.data?.list, "小米"), total: Number(data.data?.total ?? Infinity) };
-  }, 100, 150);
+  }, 100, 150, completePostingScan);
   for await (const rows of pages) {
-    for (const row of rows) if (selection.accept(date(row.publishTime))) jobs.push({ externalId: clean(row.jobPostId || row.id), company: source.name,
+    for (const row of rows) if (selection.accept(date(row.publishTime), row.jobPostId || row.id)) jobs.push({ externalId: clean(row.jobPostId || row.id), company: source.name,
       title: clean(row.title), canonicalUrl: clean(row.url), applyUrl: clean(row.url), location: names(row.cityZhNames, "name"), department: clean(row.levelOneDeptName),
       description: jd(row.description, row.requirement), postedAt: date(row.publishTime) });
+    if (ledger.getStore() && rows.length === 100 && selection.stop(rows.map(row => date(row.publishTime)), true)) break;
   }
   return ensureJd(jobs);
 }
@@ -103,13 +109,14 @@ export async function beisen(source: SourceRecord): Promise<JobRecord[]> {
     const data = await fetchJson(`${origin}/api/Jobad/GetJobAdPageList`, jsonPost({ PageIndex: page, PageSize: 100, KeyWords: "", SpecialType: 0, PortalId: "", DisplayFields: ["Category", "Kind", "LocId", "LocNames", "PostDate", "ClassificationOne", "Duty", "Require", "JobAdId"] }));
     if (data.Code !== 200) throw new Error(`北森招聘接口错误：${clean(data.Message || data.Code)}`);
     const rows = requireRows(data.Data, "北森招聘");
-    for (const row of rows) if (selection.accept(date(row.PostDateInt || row.PostDate))) {
+    for (const row of rows) if (selection.accept(date(row.PostDateInt || row.PostDate), row.JobAdId || row.Id)) {
       const url = `${origin}/jobdetail/${encodeURIComponent(row.JobAdId)}`;
       jobs.push({ externalId: clean(row.JobAdId || row.Id), company: source.name, title: clean(row.JobAdName), canonicalUrl: url, applyUrl: url,
         location: names(row.LocNames, "name", "Name"), department: clean(row.ClassificationOne), employmentType: clean(row.Kind),
         description: jd(row.Category, row.Kind, content(row.Duty, row.Require)), postedAt: date(row.PostDateInt || row.PostDate) });
     }
-    if (!rows.length || (page + 1) * 100 >= Number(data.Count) || rows.length < 100) return ensureJd(jobs);
+    if (!rows.length || (page + 1) * 100 >= Number(data.Count) || rows.length < 100) { completePostingScan(); return ensureJd(jobs); }
+    if (ledger.getStore() && selection.stop(rows.map(row => date(row.PostDateInt || row.PostDate)), true)) return ensureJd(jobs);
   }
   throw new Error("北森招聘分页超过上限");
 }
@@ -120,13 +127,14 @@ export async function kuaishou(source: SourceRecord): Promise<JobRecord[]> {
   const data = await fetchJson(`https://zhaopin.kuaishou.cn/recruit/e/api/v1/open/positions/simple?pageNum=${page}&pageSize=10&positionNatureCode=C001&recruitProject=socialr`, { headers: { referer: "https://zhaopin.kuaishou.cn/recruit/e/" } });
   if (data.code !== 0 && data.code !== 200) throw new Error(`快手招聘接口错误：${clean(data.message || data.code)}`);
   const rows = requireRows(data.result?.list, "快手");
-  jobs.push(...rows.filter(row => selection.accept(date(row.releaseTime))).map(row => {
+  jobs.push(...rows.filter(row => selection.accept(date(row.releaseTime), row.id)).map(row => {
     const url = `https://zhaopin.kuaishou.cn/recruit/e/#/official/social/job-info/${row.id}`;
     return { externalId: clean(row.id), company: source.name, title: clean(row.name), canonicalUrl: url, applyUrl: url,
       location: clean(row.workLocationName || row.workLocationCode), department: clean(row.positionCategoryName),
       description: jd(row.description, row.positionDemand), postedAt: date(row.releaseTime) };
   }));
-  if (!rows.length || page * 10 >= Number(data.result.total) || selection.stop(rows.map(r => date(r.releaseTime)))) return ensureJd(jobs);
+  if (!rows.length || page * 10 >= Number(data.result.total)) { completePostingScan(); return ensureJd(jobs); }
+  if (selection.stop(rows.map(r => date(r.releaseTime)))) return ensureJd(jobs);
   }
   throw new Error("快手招聘分页超过上限");
 }
@@ -137,13 +145,14 @@ export async function meituan(source: SourceRecord): Promise<JobRecord[]> {
     const data = await fetchJson("https://zhaopin.meituan.com/api/official/job/getJobList", jsonPost({ page: { pageNo: page, pageSize: 50 }, jobShareType: "1", keywords: "", cityList: [], department: [], jfJgList: [], jobType: [], typeCode: [], specialCode: [] }));
     if (data.status !== 1) throw new Error(`美团招聘接口错误：${clean(data.message || data.status)}`);
     const rows = requireRows(data.data?.list, "美团");
-    for (const row of rows) if (selection.accept(date(row.firstPostTime))) {
+    for (const row of rows) if (selection.accept(date(row.firstPostTime), row.jobUnionId)) {
       const url = `https://zhaopin.meituan.com/web/position/detail?jobUnionId=${encodeURIComponent(row.jobUnionId)}`;
       jobs.push({ externalId: clean(row.jobUnionId), company: source.name, title: clean(row.name), canonicalUrl: url, applyUrl: url,
         location: names(row.cityList, "name"), department: clean(row.jobFamily),
         description: jd(row.projectName, row.workYear, content(row.jobDuty, row.jobRequirement)), postedAt: date(row.firstPostTime) });
     }
-    if (!rows.length || rows.length < 50 || selection.stop(rows.map(r => date(r.firstPostTime))) || page * 50 >= Number(data.data.total ?? Infinity)) return ensureJd(jobs);
+    if (!rows.length || rows.length < 50) { completePostingScan(); return ensureJd(jobs); }
+    if (selection.stop(rows.map(r => date(r.firstPostTime))) || page * 50 >= Number(data.data.total ?? Infinity)) return ensureJd(jobs);
   }
   throw new Error("美团招聘分页超过上限");
 }
@@ -154,16 +163,19 @@ export async function gem(source: SourceRecord, account: string): Promise<JobRec
   const query = "query JobBoardList($boardId: String!) { oatsExternalJobPostings(boardId: $boardId) { jobPostings { id extId title locations { name city isoCountry isRemote } job { department { name } locationType employmentType } } } }";
   const data = await fetchJson("https://jobs.gem.com/api/public/graphql/batch", jsonPost([{ operationName: "JobBoardList", variables: { boardId: account }, query }]));
   if (data[0]?.errors) throw new Error("Gem 公开职位接口错误");
-  const rows = selectPostingRows(requireRows(data[0]?.data?.oatsExternalJobPostings?.jobPostings, "Gem"), () => null);
+  const rows = selectPostingRows(requireRows(data[0]?.data?.oatsExternalJobPostings?.jobPostings, "Gem"), () => null, row => row.extId);
+  completePostingScan();
   return ensureJd(await mapDetails(rows, row => [row.extId, null, row.title], async row => {
     const url = `https://jobs.gem.com/${account}/${row.extId}`;
     const html = await (await fetchSource(url)).text();
     // Gem exposes the entire posting as its server-rendered description metadata.
     const description = html.match(/<meta\s+name="description"\s+content="([\s\S]*?)"\s*\/?\s*>/i)?.[1];
     if (!description || description.length < 150) throw new Error(`Gem 职位详情缺失：${row.extId}`);
+    let published: string | null = null;
+    try { published = date(jobPostingJson(html).datePosted); } catch { /* A description is enough to keep the job undated. */ }
     return { externalId: clean(row.extId), company: source.name, title: clean(row.title), canonicalUrl: url, applyUrl: url,
       location: row.locations.map((l: any) => [l.name, l.isoCountry].filter(Boolean).join(", ")).join(" · "), department: clean(row.job?.department?.name), employmentType: clean(row.job?.employmentType), workplaceType: clean(row.job?.locationType),
-      description: jd(description), postedAt: null };
+      description: jd(description), postedAt: published };
   }));
 }
 
@@ -192,7 +204,7 @@ export async function alibaba(source: SourceRecord, account: string): Promise<Jo
     const rows = result.content?.datas === null && result.content?.totalCount === 0 ? [] : requireRows(result.content?.datas, "阿里招聘");
     for (const row of rows) {
       if (seen.has(clean(row.id))) continue; seen.add(clean(row.id));
-      if (!selection.accept(date(row.publishTime))) continue;
+      if (!selection.accept(date(row.publishTime), row.id)) continue;
       const path = campus ? "/campus/position-detail" : "/off-campus/position-detail";
       const url = `${origin}${path}?positionId=${row.id}${campus ? `&batchId=${batch.id}` : ""}`;
       jobs.push({ externalId: clean(row.id), company: source.name, title: clean(row.name), canonicalUrl: url, applyUrl: url,
@@ -206,15 +218,23 @@ export async function alibaba(source: SourceRecord, account: string): Promise<Jo
 }
 
 export async function netease(source: SourceRecord): Promise<JobRecord[]> {
-  // The public list includes full duties and requirements, but only an updateTime.
-  const data = await fetchJson("https://hr.163.com/api/hr163/position/queryPage", jsonPost({ currentPage: 1, pageSize: 50 }));
-  if (data.code !== 200 && data.code !== 0) throw new Error(`网易招聘接口错误：${clean(data.message || data.code)}`);
-  return ensureJd(selectPostingRows(requireRows(data.data?.list, "网易"), () => null).map(row => {
-    const url = `https://hr.163.com/job-detail.html?id=${encodeURIComponent(row.id)}`;
-    return { externalId: clean(row.id), company: source.name, title: clean(row.name), canonicalUrl: url, applyUrl: url,
-      location: names(row.workPlaceNameList, "name"), department: clean(row.firstDepName), employmentType: clean(row.reqWorkYearsName),
-      description: jd(row.reqWorkYearsName, content(row.description, row.requirement)), postedAt: null };
-  }));
+  const tracked = !!ledger.getStore(), selection = createPostingSelection(), jobs: JobRecord[] = [];
+  for (let currentPage = 1; currentPage <= (tracked ? ID_SCAN_PAGES : 1); currentPage++) {
+    const data = await fetchJson("https://hr.163.com/api/hr163/position/queryPage", jsonPost({ currentPage, pageSize: 50 }));
+    if (data.code !== 200 && data.code !== 0) throw new Error(`网易招聘接口错误：${clean(data.message || data.code)}`);
+    const rows = requireRows(data.data?.list, "网易");
+    for (const row of rows) {
+      const published = date(row.publishTime), updated = date(row.updateTime);
+      if (!selection.accept(published || updated, row.id, published ? "published" : "updated")) continue;
+      const url = `https://hr.163.com/job-detail.html?id=${encodeURIComponent(row.id)}`;
+      jobs.push({ externalId: clean(row.id), company: source.name, title: clean(row.name), canonicalUrl: url, applyUrl: url,
+        location: names(row.workPlaceNameList, "name"), department: clean(row.firstDepName), employmentType: clean(row.reqWorkYearsName),
+        description: jd(row.reqWorkYearsName, content(row.description, row.requirement)), postedAt: published || updated, dateKind: published ? "published" : "updated" });
+    }
+    if (rows.length < 50 || currentPage * 50 >= Number(data.data?.total ?? Infinity)) { completePostingScan(); break; }
+    if (selection.stop(rows.map(row => date(row.publishTime)))) break;
+  }
+  return ensureJd(jobs);
 }
 
 export async function xiaohongshu(source: SourceRecord): Promise<JobRecord[]> {
@@ -223,12 +243,13 @@ export async function xiaohongshu(source: SourceRecord): Promise<JobRecord[]> {
     const data = await fetchJson("https://job.xiaohongshu.com/websiterecruit/position/pageQueryPosition", jsonPost({ positionName: "", pageNum: page, pageSize: 50, recruitType: "social" }));
     if (data.success !== true || data.statusCode !== 200) throw new Error(`小红书招聘接口错误：${clean(data.errorMsg || data.statusCode)}`);
     const rows = requireRows(data.data?.list, "小红书");
-    for (const row of rows) if (selection.accept(date(row.publishTime))) {
+    for (const row of rows) if (selection.accept(date(row.publishTime), row.positionId || row.id)) {
       const url = `https://job.xiaohongshu.com/social/position/${row.positionId}`;
       jobs.push({ externalId: clean(row.positionId), company: source.name, title: clean(row.positionName), canonicalUrl: url, applyUrl: url,
         location: clean(row.workplace), department: clean(row.jobType), description: jd(row.jobProjectName, row.duty, row.qualification), postedAt: date(row.publishTime) });
     }
-    if (!rows.length || page * 50 >= Number(data.data.total) || rows.length < 50) return ensureJd(jobs);
+    if (!rows.length || page * 50 >= Number(data.data.total) || rows.length < 50) { completePostingScan(); return ensureJd(jobs); }
+    if (ledger.getStore() && selection.stop(rows.map(row => date(row.publishTime)), true)) return ensureJd(jobs);
   }
   throw new Error("小红书招聘分页超过上限");
 }
@@ -238,30 +259,40 @@ export async function jdcom(source: SourceRecord): Promise<JobRecord[]> {
   for (let page = 1; page <= 200; page++) {
     const data = await fetchJson("https://zhaopin.jd.com/web/job/job_list", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ pageIndex: String(page), pageSize: "50", workCityJson: "[]", jobTypeJson: "[]", jobSearch: "", depTypeJson: "[]" }).toString() });
     const rows = requireRows(data, "京东");
-    for (const row of rows) if (selection.accept(date(row.publishTime || row.formatPublishTime))) {
+    for (const row of rows) if (selection.accept(date(row.publishTime || row.formatPublishTime), row.requirementId || row.positionId || row.id)) {
       // The public JD expands inline on this page; use its real application target.
       const url = `https://zhaopin.jd.com/web/job/job_info_list/3?positionId=${encodeURIComponent(row.positionId || row.id)}&requirementId=${encodeURIComponent(row.requirementId || row.id)}`;
       jobs.push({ externalId: clean(row.requirementId || row.positionId || row.id), company: source.name, title: clean(row.positionNameOpen || row.positionName), canonicalUrl: url, applyUrl: url,
         location: clean(row.workCity), department: clean(row.positionDeptName || row.jobType), description: jd(row.workContent, row.qualification), postedAt: date(row.publishTime || row.formatPublishTime) });
     }
-    if (!rows.length || rows.length < 50 || rows.every(r => !date(r.publishTime || r.formatPublishTime))) return ensureJd(jobs);
+    if (!rows.length || rows.length < 50) { completePostingScan(); return ensureJd(jobs); }
+    const dates = rows.map(r => date(r.publishTime || r.formatPublishTime));
+    if (ledger.getStore() ? selection.stop(dates, true) : dates.every(value => !value)) return ensureJd(jobs);
   }
   throw new Error("京东招聘分页超过上限");
 }
 
 export async function tiktok(source: SourceRecord): Promise<JobRecord[]> {
-  const data = await fetchJson("https://api.lifeattiktok.com/api/v1/public/supplier/search/job/posts", {
-    ...jsonPost({ recruitment_id_list: [], job_category_id_list: [], subject_id_list: [], location_code_list: [], keyword: "", limit: 50, offset: 0 }),
-    headers: { "content-type": "application/json", "website-path": "tiktok", origin: "https://lifeattiktok.com", referer: "https://lifeattiktok.com/" },
-  });
-  if (data.code !== 0) throw new Error(`TikTok 接口错误：${clean(data.message || data.code)}`);
-  return ensureJd(selectPostingRows(requireRows(data.data?.job_post_list, "TikTok"), () => null).map(row => {
-    const url = `https://lifeattiktok.com/search/${row.id}`, cities: string[] = [];
-    for (let city = row.city_info; city; city = city.parent) if (city.en_name || city.name) cities.push(city.en_name || city.name);
-    return { externalId: clean(row.id), company: source.name, title: clean(row.title), canonicalUrl: url, applyUrl: url,
-      location: cities.join(", "), employmentType: clean(row.recruit_type?.en_name || row.recruit_type?.name), department: clean(row.job_category?.en_name),
-      description: jd(row.recruit_type?.en_name, content(row.description, row.requirement)), postedAt: null };
-  }));
+  const tracked = !!ledger.getStore(), selection = createPostingSelection(), jobs: JobRecord[] = [];
+  for (let page = 0; page < (tracked ? ID_SCAN_PAGES : 1); page++) {
+    const data = await fetchJson("https://api.lifeattiktok.com/api/v1/public/supplier/search/job/posts", {
+      ...jsonPost({ recruitment_id_list: [], job_category_id_list: [], subject_id_list: [], location_code_list: [], keyword: "", limit: 50, offset: page * 50 }),
+      headers: { "content-type": "application/json", "website-path": "tiktok", origin: "https://lifeattiktok.com", referer: "https://lifeattiktok.com/" },
+    });
+    if (data.code !== 0) throw new Error(`TikTok 接口错误：${clean(data.message || data.code)}`);
+    const rows = requireRows(data.data?.job_post_list, "TikTok");
+    for (const row of rows) {
+      if (!selection.accept(null, row.id)) continue;
+      const url = `https://lifeattiktok.com/search/${row.id}`, cities: string[] = [];
+      for (let city = row.city_info; city; city = city.parent) if (city.en_name || city.name) cities.push(city.en_name || city.name);
+      jobs.push({ externalId: clean(row.id), company: source.name, title: clean(row.title), canonicalUrl: url, applyUrl: url,
+        location: cities.join(", "), employmentType: clean(row.recruit_type?.en_name || row.recruit_type?.name), department: clean(row.job_category?.en_name),
+        description: jd(row.recruit_type?.en_name, content(row.description, row.requirement)), postedAt: null });
+    }
+    if (rows.length < 50 || data.data?.has_more === false) { completePostingScan(); break; }
+    if (selection.stop(rows.map(() => null))) break;
+  }
+  return ensureJd(jobs);
 }
 
 export async function meta(source: SourceRecord): Promise<JobRecord[]> {
@@ -274,7 +305,7 @@ export async function meta(source: SourceRecord): Promise<JobRecord[]> {
     body: new URLSearchParams({ av: "0", __user: "0", __a: "1", __comet_req: "31", lsd, doc_id: "40084319704492118", fb_api_caller_class: "RelayModern", fb_api_req_friendly_name: "CareersJobSearchResultsDataQuery", variables: JSON.stringify(variables) }).toString() });
   const data = JSON.parse((await response.text()).replace(/^for\s*\(;;\);/, ""));
   if (data.errors) throw new Error("Meta 公开职位查询失败，官网查询版本可能已变更");
-  const rows = selectPostingRows(requireRows(data.data?.job_search_with_featured_jobs_v2?.all_jobs, "Meta"), () => null);
+  const rows = selectPostingRows(requireRows(data.data?.job_search_with_featured_jobs_v2?.all_jobs, "Meta"), () => null, row => row.id);
   return ensureJd(await mapDetails(rows, row => [row.id, null, row.title], async row => {
     const url = `${origin}/profile/job_details/${row.id}/`, d = jobPostingJson(await (await session.fetch(url)).text());
     return { externalId: clean(row.id), company: source.name, title: clean(d.title || row.title), canonicalUrl: url, applyUrl: url,
@@ -306,7 +337,7 @@ export async function moka(source: SourceRecord, account: string): Promise<JobRe
     if (envelope.code !== 0 || !envelope.success) throw new Error(`Moka 接口错误：${clean(envelope.msg || envelope.code)}`);
     const data = envelope.data, chinaDate = (value: unknown) => date(typeof value === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d)?$/.test(value) ? `${value}+08:00` : value);
     const rows = requireRows(data?.jobs, "Moka");
-    jobs.push(...await mapDetails(rows.filter(row => selection.accept(chinaDate(row.publishedAt))),
+    jobs.push(...await mapDetails(rows.filter(row => selection.accept(chinaDate(row.publishedAt), row.id)),
       row => [row.id, row.updatedAt, row.publishedAt, row.title], async row => {
       const detailResponse = await session.fetch("https://app.mokahr.com/api/outer/ats-apply/website/job", jsonPost({ orgId, siteId, jobId: row.id, locale: "zh-CN" }));
       const detail = decodeMoka(await detailResponse.json(), config.aesIv);
@@ -318,7 +349,8 @@ export async function moka(source: SourceRecord, account: string): Promise<JobRe
         description: jd(d.commitment, content(d.jobDescription)), postedAt: chinaDate(row.publishedAt) };
     }, 3));
     // Prioritized/pinned postings make this list unsorted by publication date.
-    if (!rows.length || offset + rows.length >= Number(data.jobStats?.total) || rows.length < 50 || rows.every(r => !r.publishedAt) && offset >= 0) return ensureJd(jobs);
+    if (!rows.length || offset + rows.length >= Number(data.jobStats?.total) || rows.length < 50) { completePostingScan(); return ensureJd(jobs); }
+    if (ledger.getStore() ? selection.stop(rows.map(row => chinaDate(row.publishedAt)), true) : rows.every(row => !row.publishedAt)) return ensureJd(jobs);
   }
   throw new Error("Moka 招聘分页超过上限");
 }
@@ -335,15 +367,19 @@ export async function baidu(source: SourceRecord): Promise<JobRecord[]> {
       if (data.status !== "ok") throw new Error(`百度招聘接口错误：${clean(data.message || data.status)}`);
       return { rows: requireRows(data.data?.list, "百度"), total: Number(data.data?.total ?? Infinity) };
     }, 10, 200);
-    for await (const rows of pages) for (const row of rows) {
-      if (seen.has(clean(row.postId))) continue; seen.add(clean(row.postId));
-      if (!selection.accept(date(row.publishDate))) continue;
-      const url = `${origin}/jobs/detail/${recruitType}/${encodeURIComponent(row.postId)}`;
-      jobs.push({ externalId: clean(row.postId), company: source.name, title: clean(row.name), canonicalUrl: url, applyUrl: url,
-        location: clean(row.workPlace), department: clean(row.postType), employmentType: recruitType === "INTERN" ? "实习" : "应届生",
-        description: jd(recruitType === "INTERN" ? "招聘类别：实习生" : "招聘类别：校园招聘应届生", content(row.workContent, row.serviceCondition)), postedAt: date(row.publishDate) });
+    for await (const rows of pages) {
+      for (const row of rows) {
+        if (seen.has(clean(row.postId))) continue; seen.add(clean(row.postId));
+        if (!selection.accept(date(row.publishDate), row.postId)) continue;
+        const url = `${origin}/jobs/detail/${recruitType}/${encodeURIComponent(row.postId)}`;
+        jobs.push({ externalId: clean(row.postId), company: source.name, title: clean(row.name), canonicalUrl: url, applyUrl: url,
+          location: clean(row.workPlace), department: clean(row.postType), employmentType: recruitType === "INTERN" ? "实习" : "应届生",
+          description: jd(recruitType === "INTERN" ? "招聘类别：实习生" : "招聘类别：校园招聘应届生", content(row.workContent, row.serviceCondition)), postedAt: date(row.publishDate) });
+      }
+      if (ledger.getStore() && selection.stop(rows.map(row => date(row.publishDate)), true)) return ensureJd(jobs);
     }
   }
+  completePostingScan();
   return ensureJd(jobs);
 }
 
@@ -353,13 +389,14 @@ export async function antgroup(source: SourceRecord): Promise<JobRecord[]> {
     const data = await fetchJson("https://hrcareersweb.antgroup.com/api/social/position/search", jsonPost({ key: "", regions: "", categories: "", subCategories: "", bgCode: "", socialQrCode: "", pageIndex: page, pageSize: 20, channel: "group_official_site", language: "zh" }));
     if (data.success !== true) throw new Error(`蚂蚁招聘接口错误：${clean(data.errorMsg || data.errorCode)}`);
     return { rows: requireRows(data.content, "蚂蚁集团"), total: Number(data.totalCount ?? Infinity) };
-  }, 20, 500);
+  }, 20, 500, completePostingScan);
   for await (const rows of pages) {
-    for (const row of rows) if (selection.accept(date(row.publishTime))) {
+    for (const row of rows) if (selection.accept(date(row.publishTime), row.positionId || row.id)) {
       const url = `https://talent.antgroup.com/off-campus-position/${row.id}`;
       jobs.push({ externalId: clean(row.id), company: source.name, title: clean(row.name), canonicalUrl: url, applyUrl: url,
         location: names(row.workLocations, "name"), department: clean(row.department), description: jd(row.description, row.requirement), postedAt: date(row.publishTime) });
     }
+    if (ledger.getStore() && rows.length === 20 && selection.stop(rows.map(row => date(row.publishTime)), true)) break;
   }
   return ensureJd(jobs);
 }

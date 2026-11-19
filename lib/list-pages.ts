@@ -4,10 +4,11 @@ import { mapPool } from "./crawler-http";
 // so the first fifty undated records remain deterministic.
 export async function* numberedPages<T>(
   load: (page: number) => Promise<{ rows: T[]; total: number }>, size: number, maximum: number,
+  complete?: () => void,
 ) {
   const first = await load(1);
   yield first.rows;
-  if (first.rows.length < size) return;
+  if (first.rows.length < size) { complete?.(); return; }
   const knownTotal = Number.isFinite(first.total) && first.total >= 0;
   let total = first.total;
   const step = knownTotal ? 2 : 1;
@@ -17,8 +18,9 @@ export async function* numberedPages<T>(
     for (const { rows, total: reported } of await mapPool(pages, load, step)) {
       if (knownTotal && Number.isFinite(reported)) total = Math.max(total, reported);
       yield rows;
-      if (rows.length < size) return;
+      if (rows.length < size) { complete?.(); return; }
     }
   }
   if (!knownTotal || total > maximum * size) throw new Error("招聘列表分页超过上限");
+  complete?.();
 }

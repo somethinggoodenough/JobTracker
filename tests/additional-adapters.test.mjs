@@ -70,7 +70,7 @@ test('Moka uses publishedAt in China time, never updatedAt, and fetches complete
 
 test('NetEase does not mislabel an updateTime as a publication date',async t=>{
  t.mock.method(globalThis,'fetch',async()=>Response.json({code:200,data:{list:[{id:1,name:'Backend Intern',workPlaceNameList:['北京'],description:'Full duties',requirement:'Python',updateTime:Date.now()}]}}));
- const jobs=await netease(source);assert.equal(jobs[0].postedAt,null);
+ const jobs=await netease(source);assert.equal(jobs[0].dateKind,'updated');assert(Number.isFinite(Date.parse(jobs[0].postedAt)));
 });
 
 test('TikTok uses its public website identifier and retains country evidence',async t=>{

@@ -7,6 +7,7 @@ import { screeningIdentity } from "./screening-context";
 import { hasPublicationDate } from "./crawl-policy";
 import { isInCrawlWindow, publicationTime } from "./crawl-window";
 import { throwIfSyncCancelled } from "./sync-control";
+import { classifyFreshness, freshnessRank, normalizePostingKey, type Freshness, type FreshnessReason, type PostingSnapshot } from "./posting-ledger";
 const DAY = 86_400_000;
 const normalize = (value: string | null | undefined) =>
   (value ?? "").toLowerCase().normalize("NFKC").replace(/\s+/g, " ").trim();
@@ -43,9 +44,11 @@ export async function seedDiscoveries(db: D1Database) {
   }
 }
 
-type Entry = { job: JobRecord; approved?: JobDecision; originalFirstSeen?: string; historical?: boolean };
+type Discovery = { known: ReadonlySet<string>; positions: ReadonlyMap<string, number>; prev: PostingSnapshot | null; observedAt?: number };
+type Entry = { job: JobRecord; approved?: JobDecision; originalFirstSeen?: string; historical?: boolean; discovery?: Discovery };
 type Result = { state: "ignored" | "queued" | "added" | "updated" | "unchanged"; deleted: number };
-type Stored = { id: number; posted_at: string; first_seen_at: string; publication_verified: number; crawl_hash: string | null; ai_policy: string | null };
+type Stored = { id: number; posted_at: string; first_seen_at: string; publication_verified: number; crawl_hash: string | null; ai_policy: string | null;
+  freshness: Freshness; freshness_reason: FreshnessReason | null; appeared_after: string | null };
 
 export async function upsertJob(db: D1Database, source: SourceRecord, job: JobRecord, now: string, cutoff: number,
   classifier: ReturnType<typeof createJobClassifier>, model: string, approved?: JobDecision, originalFirstSeen?: string, historical = false) {
@@ -54,8 +57,8 @@ export async function upsertJob(db: D1Database, source: SourceRecord, job: JobRe
 }
 
 export function upsertJobs(db: D1Database, source: SourceRecord, jobs: JobRecord[], now: string, cutoff: number,
-  classifier: ReturnType<typeof createJobClassifier>, model: string) {
-  return persistJobs(db, source, jobs.map(job => ({ job })), now, cutoff, classifier, model);
+  classifier: ReturnType<typeof createJobClassifier>, model: string, discovery?: Discovery) {
+  return persistJobs(db, source, jobs.map(job => ({ job, discovery })), now, cutoff, classifier, model);
 }
 
 // Callers serialize batches to keep decisions based on the same rows they commit.
@@ -66,13 +69,14 @@ async function persistJobs(db: D1Database, source: SourceRecord, entries: Entry[
   throwIfSyncCancelled();
   const identities = await Promise.all(entries.map(async ({ job }) => {
     const url = canonicalUrl(job.canonicalUrl || job.applyUrl || source.url);
-    const sourceKey = `${source.id}:${normalize(job.externalId || url)}`;
+    const postingKey = normalizePostingKey(job.externalId || url);
+    const sourceKey = `${source.id}:${postingKey}`;
     const dedupe = await sha256([job.company || source.name, job.title, job.location, job.department, job.employmentType].map(normalize).join("|"));
-    return { url, sourceKey, dedupe, discoveries: [`url:${await sha256(url)}`, `fingerprint:${dedupe}`] };
+    return { url, sourceKey, postingKey, dedupe, discoveries: [`url:${await sha256(url)}`, `fingerprint:${dedupe}`] };
   }));
   const keyRows = identities.map(() => "(?,?,?,?)").join(",");
   const lookup = await db.prepare(`WITH incoming(n,source_key,url,dedupe) AS (VALUES ${keyRows})
-    SELECT incoming.n,j.id,j.first_seen_at,j.posted_at,j.publication_verified,j.crawl_hash,j.ai_policy
+    SELECT incoming.n,j.id,j.first_seen_at,j.posted_at,j.publication_verified,j.crawl_hash,j.ai_policy,j.freshness,j.freshness_reason,j.appeared_after
       FROM incoming JOIN jobs j ON j.source_external_key=incoming.source_key OR j.canonical_url=incoming.url OR j.dedupe_key=incoming.dedupe
       ORDER BY j.id`).bind(...identities.flatMap((k, i) => [i, k.sourceKey, k.url, k.dedupe])).all<Stored & { n: number }>();
   const keys = identities.flatMap(k => [k.sourceKey, ...k.discoveries]);
@@ -95,20 +99,31 @@ async function persistJobs(db: D1Database, source: SourceRecord, entries: Entry[
 
   for (const [i, entry] of entries.entries()) {
     throwIfSyncCancelled();
-    const { job, approved, originalFirstSeen, historical } = entry;
-    const { url, sourceKey, dedupe, discoveries: identityKeys } = identities[i];
+    const { job, approved, originalFirstSeen, historical, discovery } = entry;
+    const { url, sourceKey, postingKey, dedupe, discoveries: identityKeys } = identities[i];
     const existing = existingRows.get(i);
     const result: Result = { state: "ignored", deleted: 0 };
     results.push(result);
     const time = publicationTime(job.postedAt);
-    const dated = hasPublicationDate(job.postedAt);
+    const dated = (!job.dateKind || job.dateKind === "published") && hasPublicationDate(job.postedAt);
     if (dated && time <= cutoff) {
       deletions.push([statements.length, result]);
       statements.push(db.prepare("DELETE FROM jobs WHERE source_external_key=? OR canonical_url=?").bind(sourceKey, url));
       continue;
     }
     if (!historical && dated && !isInCrawlWindow(job.postedAt)) continue;
-    const firstSeen = [existing?.first_seen_at || originalFirstSeen || now, ...identityKeys.map(key => discoveries.get(key))]
+    if (job.dateKind === "updated" && time < cutoff) continue;
+    const earlier = identityKeys.map(key => discoveries.get(key)).filter((date): date is string => !!date).sort()[0];
+    const previous = existing ? { freshness: existing.publication_verified ? "published" as const : existing.freshness,
+      appearedAfter: existing.appeared_after, reason: existing.freshness_reason } : null;
+    const observed = discovery || job.dateKind === "listed" ? classifyFreshness({ key: postingKey, date: job.postedAt, dateKind: job.dateKind,
+      position: discovery?.positions.get(postingKey), known: discovery?.known ?? new Set(), prev: discovery?.prev,
+      now: discovery?.observedAt ?? Date.parse(now), firstSeenElsewhere: earlier, existing: previous }) : null;
+    const proposed = dated ? { freshness: "published" as const, appearedAfter: null, reason: null } :
+      job.freshness ?? observed ?? { freshness: "uncertain" as const, appearedAfter: null, reason: "untracked" as const };
+    const fresh = previous && freshnessRank[previous.freshness] >= freshnessRank[proposed.freshness] ? previous : proposed;
+    const recordedAt = discovery?.observedAt ? new Date(discovery.observedAt).toISOString() : now;
+    const firstSeen = [existing?.first_seen_at || originalFirstSeen || recordedAt, ...identityKeys.map(key => discoveries.get(key))]
       .filter((date): date is string => !!date).sort()[0];
     for (const key of identityKeys) {
       if (discoveries.get(key) === firstSeen) continue;
@@ -134,7 +149,8 @@ async function persistJobs(db: D1Database, source: SourceRecord, entries: Entry[
     if (!approved && existing?.ai_policy === AI_POLICY && existing.crawl_hash) {
       crawlHash = await hash();
       if (existing.crawl_hash === crawlHash) {
-        statements.push(db.prepare("UPDATE jobs SET last_seen_at=?1 WHERE id=?2").bind(now, existing.id));
+        statements.push(db.prepare("UPDATE jobs SET last_seen_at=?1,freshness=?3,appeared_after=?4,freshness_reason=?5 WHERE id=?2")
+          .bind(now, existing.id, fresh.freshness, fresh.appearedAfter, fresh.reason));
         result.state = "unchanged";
         classifier.metrics.cacheHits++;
         continue;
@@ -145,7 +161,7 @@ async function persistJobs(db: D1Database, source: SourceRecord, entries: Entry[
     catch (error) {
       if (!(error instanceof AwaitingClassification)) throw error;
       if (existing?.ai_policy) statements.push(db.prepare("UPDATE jobs SET ai_policy=NULL WHERE id=?").bind(existing.id));
-      statements.push(await candidateWrite(db, source, job, url, dedupe, firstSeen,
+      statements.push(await candidateWrite(db, source, { ...job, freshness: fresh }, url, dedupe, firstSeen,
         new Date(Date.parse(postedAt) + 7 * DAY).toISOString(), error.priority, model, classifier.settings));
       result.state = "queued";
       continue;
@@ -157,13 +173,14 @@ async function persistJobs(db: D1Database, source: SourceRecord, entries: Entry[
         canonical_url=?4, apply_url=?5, company=?6, title=?7, location=?8, workplace_type=?9,
         employment_type=?10, department=?11, salary=?12, description=?13, posted_at=?14,
         last_seen_at=?15, updated_at=?15, ai_policy=?16,ai_analysis=?17,ai_model=?18,
-        ai_reviewed_at=?19,publication_verified=?20,crawl_hash=?21 WHERE id=?22`).bind(...values, now, ...analysis, existing.id));
+        ai_reviewed_at=?19,publication_verified=?20,crawl_hash=?21,freshness=?23,appeared_after=?24,freshness_reason=?25 WHERE id=?22`)
+        .bind(...values, now, ...analysis, existing.id, fresh.freshness, fresh.appearedAfter, fresh.reason));
     } else {
       statements.push(db.prepare(`INSERT INTO jobs (source_id,source_external_key,dedupe_key,canonical_url,
         apply_url,company,title,location,workplace_type,employment_type,department,salary,description,posted_at,
-        last_seen_at,updated_at,ai_policy,ai_analysis,ai_model,ai_reviewed_at,publication_verified,crawl_hash,first_seen_at)
-        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?15,?16,?17,?18,?19,?20,?21,?22)`)
-        .bind(...values, now, ...analysis, firstSeen));
+        last_seen_at,updated_at,ai_policy,ai_analysis,ai_model,ai_reviewed_at,publication_verified,crawl_hash,first_seen_at,freshness,appeared_after,freshness_reason)
+        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25)`)
+        .bind(...values, now, ...analysis, firstSeen, fresh.freshness, fresh.appearedAfter, fresh.reason));
     }
     statements.push(candidateDelete(db, url, dedupe));
     result.state = existing ? "updated" : "added";

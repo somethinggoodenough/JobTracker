@@ -40,9 +40,10 @@ test('Company country filters by employer across locations, aggregators and resu
  t.after(() => db.close());
  db.exec(`CREATE TABLE sources (id INTEGER PRIMARY KEY, name TEXT);
    CREATE TABLE jobs (id INTEGER PRIMARY KEY, source_id INTEGER, company TEXT, title TEXT, location TEXT,
-     description TEXT, posted_at TEXT, ai_policy TEXT, ai_analysis TEXT);
+     description TEXT, posted_at TEXT, ai_policy TEXT, ai_analysis TEXT, publication_verified INTEGER DEFAULT 1,
+     first_seen_at TEXT, freshness TEXT DEFAULT 'published');
    INSERT INTO sources VALUES (1,'Aggregate Board'), (2,'Google');`);
- const insert = db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?)');
+ const insert = db.prepare('INSERT INTO jobs(id,source_id,company,title,location,description,posted_at,ai_policy,ai_analysis) VALUES(?,?,?,?,?,?,?,?,?)');
  function job(id, source, company, location) {
   insert.run(id, source, company, 'Backend Engineer', location, 'Build APIs', '2026-11-17T11:00:00Z', AI_POLICY, '{"accepted":true}');
  }

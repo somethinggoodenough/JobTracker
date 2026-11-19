@@ -5,6 +5,13 @@ export const SYNC_HEARTBEAT_INTERVAL_MS = 5000;
 const STALE_AFTER_MS = 45_000;
 const LOST_OWNER = "同步进程心跳中断，剩余候选已保留";
 
+export function failedSourceSnapshots(db: D1Database, runId: number, stamp: string) {
+  return db.prepare(`INSERT OR IGNORE INTO source_snapshots(source_id,run_id,crawled_at,observed_count,scan_complete,status)
+    SELECT p.source_id,p.run_id,?2,0,0,'failed'
+    FROM scrape_source_progress p JOIN sources s ON s.id=p.source_id JOIN scrape_runs r ON r.id=p.run_id
+    WHERE p.run_id=?1 AND r.finished_at=?2 AND p.started_at IS NOT NULL AND p.stage IN ('fetching','saving')`).bind(runId, stamp);
+}
+
 export async function recoverStaleSync(db: D1Database, runId?: number, now = new Date()): Promise<boolean> {
   const stamp = now.toISOString();
   const cutoff = new Date(now.getTime() - STALE_AFTER_MS).toISOString();
@@ -24,6 +31,7 @@ export async function recoverStaleSync(db: D1Database, runId?: number, now = new
       WHERE id=?1 AND status IN ('running','cancelling') AND EXISTS (
         SELECT 1 FROM scrape_source_progress WHERE run_id=?1 AND source_id=?2 AND updated_at<=?5
       )`).bind(stale.id, SYNC_HEARTBEAT_SOURCE, stamp, LOST_OWNER, cutoff),
+    failedSourceSnapshots(db, stale.id, stamp),
     db.prepare(`UPDATE scrape_source_progress SET
       stage=CASE WHEN (SELECT status FROM scrape_runs WHERE id=?1)='cancelled' THEN 'cancelled' ELSE 'failed' END,
       finished_at=?2, updated_at=?2, error=COALESCE(error,?3)

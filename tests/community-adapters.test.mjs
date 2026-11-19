@@ -34,7 +34,7 @@ test('Community metadata ignores closed/hidden entries, sorts inclusion dates an
 test('Simplify reads the original JD and work locations, never update timestamps or generated summaries',()=>{
  const detail=posting(1,{description:'<p>Original JD requires Go.</p>',requirements:['AI-generated Python summary'],min_salary:20,max_salary:30,currency_type:'USD'});
  const job=parseSimplifyDetail(page(detail),uid(1),parseCommunityListings([listing(1)])[0]);
- assert.equal(job.postedAt,null);assert.equal(job.description,'Original JD requires Go.');assert(!job.description.includes('Python'));assert.equal(job.canonicalUrl,'https://employer.example/jobs/1');assert.match(job.location,/United States/);assert.equal(job.salary,'USD 20–30');
+ assert.equal(job.postedAt,new Date(listing(1).date_posted*1000).toISOString());assert.equal(job.dateKind,'listed');assert.equal(job.description,'Original JD requires Go.');assert(!job.description.includes('Python'));assert.equal(job.canonicalUrl,'https://employer.example/jobs/1');assert.match(job.location,/United States/);assert.equal(job.salary,'USD 20–30');
  assert.equal(parseSimplifyDetail(page(posting(1,{active:false})),uid(1)),null);
  assert.equal(parseSimplifyDetail(page(posting(1,{archive:true})),uid(1)),null);
  assert.throws(()=>parseSimplifyDetail(page(posting(1)),uid(2)),/结构/);
@@ -56,7 +56,7 @@ test('ATS application forms and board aliases normalize to posting URLs for cros
 test('A source loads only fifty distinct latest unknown-date jobs, preserves employer links and never calls AI',async()=>{
  const urls=[];
  const jobs=await mocked(async url=>{urls.push(String(url));if(String(url).includes('raw.githubusercontent'))return response(Array.from({length:80},(_,i)=>listing(i+1)));const id=String(url).split('/').at(-1),i=Number(id.split('-').at(-1));return new Response(page(posting(i)));},()=>crawlSource(source));
- assert.equal(jobs.length,50);assert.equal(urls.length,51);assert.equal(jobs[0].externalId,uid(80));assert.equal(jobs.at(-1).externalId,uid(31));assert(jobs.every(j=>j.postedAt===null&&j.description.includes('PostgreSQL')));assert(urls.every(url=>url.includes('raw.githubusercontent.com')||url.startsWith('https://simplify.jobs/p/')));assert(jobs.warnings.some(w=>w.includes('前 50')));
+ assert.equal(jobs.length,50);assert.equal(urls.length,51);assert.equal(jobs[0].externalId,uid(80));assert.equal(jobs.at(-1).externalId,uid(31));assert(jobs.every(j=>j.dateKind==='listed'&&j.description.includes('PostgreSQL')));assert(urls.every(url=>url.includes('raw.githubusercontent.com')||url.startsWith('https://simplify.jobs/p/')));
 });
 
 test('Fallback retrieves a single ATS JD and excludes verified old publication dates',async()=>{

@@ -1,3 +1,5 @@
+import type { DateKind, FreshnessResult } from "./posting-ledger";
+
 export type SourceAdapter = "auto" | "greenhouse" | "lever" | "ashby" | "workday" | "workable" | "jsonld"
   | "amazon" | "google" | "jibe" | "tencent" | "eightfold" | "oracle" | "smartrecruiters" | "apple" | "paycor" | "comeet"
   | "feishu" | "salesforce" | "dify" | "xiaomi" | "beisen" | "kuaishou" | "meituan" | "gem"
@@ -17,6 +19,8 @@ export type JobRecord = {
   salary?: string | null;
   description: string;
   postedAt?: string | null;
+  dateKind?: DateKind;
+  freshness?: FreshnessResult;
 };
 
 export type SourceRecord = {

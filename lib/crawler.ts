@@ -1,8 +1,9 @@
 import type { CrawlBatch, JobRecord, SourceAdapter, SourceRecord } from "./job-types";
 import { clean, fetchSource, stripHtml } from "./crawler-http";
 import { companyProfile, dedicatedAdapters } from "./company-crawlers";
-import { currentCrawlWindow, isOlderThanCrawlWindow, shiftCalendarDate, withCrawlWindow } from "./crawl-window";
-import { hasPublicationDate, selectPostingRows } from "./crawl-policy";
+import { currentCrawlWindow, shiftCalendarDate, withCrawlWindow } from "./crawl-window";
+import { hasPublicationDate, isCrawlCandidate, selectPostingRows } from "./crawl-policy";
+import { completePostingScan, ledger } from "./posting-ledger";
 import { createPostingSelection } from "./crawl-policy";
 import { githubJobs, githubListingsUrl } from "./community-crawlers";
 import { mapDetails } from "./detail-cache";
@@ -75,9 +76,9 @@ async function greenhouseToday(fetchUrl: string, source: SourceRecord): Promise<
   const listing = await (await fetchSource(url.toString())).json() as any;
   if (!Array.isArray(listing.jobs)) throw new Error("Greenhouse 返回结构已变更");
   const unknown = listing.jobs.filter((j:any) => !hasPublicationDate(j.first_published)).length;
-  const metadata = unknown ? { warnings: [`${unknown} 条未提供发布日期，本轮仅取其中列表顺序前 50 条`] } : {};
-  const selected = selectPostingRows<any>(listing.jobs, j => j.first_published);
-  if (!selected.length) return Object.assign([], metadata);
+  const selected = selectPostingRows<any>(listing.jobs, j => j.first_published, j => j.id);
+  completePostingScan();
+  if (!selected.length) return [];
   // Large daily batches are cheaper as one feed; small ones fetch only today's JDs.
   const jobs = await mapDetails<any, any>(selected, j => [j.id, j.updated_at, j.first_published], async j => {
       if (j.content) return j;
@@ -92,13 +93,15 @@ async function greenhouseToday(fetchUrl: string, source: SourceRecord): Promise<
         return job;
       });
     } : undefined);
-  return Object.assign(greenhouse({ jobs }, source), metadata);
+  return greenhouse({ jobs }, source);
 }
 
 function lever(data: any, source: SourceRecord): JobRecord[] {
   const rows = Array.isArray(data) ? data : [];
   const date = (j:any) => j.createdAt && Number.isFinite(new Date(j.createdAt).getTime()) ? new Date(j.createdAt).toISOString() : null;
-  return selectPostingRows<any>(rows, date).map((job: any) => ({
+  const selected = selectPostingRows<any>(rows, date, job => job.id || job.hostedUrl);
+  completePostingScan();
+  return selected.map((job: any) => ({
     externalId: clean(job.id || job.hostedUrl), company: source.name || companyFromUrl(source.url),
     title: clean(job.text), canonicalUrl: clean(job.hostedUrl || job.applyUrl),
     applyUrl: clean(job.applyUrl || job.hostedUrl), location: clean(job.categories?.location) || "未注明",
@@ -112,7 +115,9 @@ function lever(data: any, source: SourceRecord): JobRecord[] {
 
 function ashby(data: any, source: SourceRecord): JobRecord[] {
   const rows = data?.jobs ?? [];
-  return selectPostingRows<any>(rows, j => j.publishedAt).map((job: any) => ({
+  const selected = selectPostingRows<any>(rows, j => j.publishedAt, job => job.id || job.jobUrl);
+  completePostingScan();
+  return selected.map((job: any) => ({
     externalId: clean(job.id || job.jobUrl), company: source.name || companyFromUrl(source.url),
     title: clean(job.title), canonicalUrl: clean(job.jobUrl || job.applyUrl),
     applyUrl: clean(job.applyUrl || job.jobUrl),
@@ -143,27 +148,27 @@ async function workday(source: SourceRecord): Promise<JobRecord[]> {
   const site = parts[localeOffset] || parts[0];
   if (!tenant || !site) throw new Error("无法从 Workday URL 识别 tenant/site");
   const base = `${url.protocol}//${url.host}/wday/cxs/${encodeURIComponent(tenant)}/${encodeURIComponent(site)}`;
-  const jobs: any[] = [];
+  const todayJobs: any[] = [], selection = createPostingSelection();
+  const posted = (job: any) => relativePostedAt(job.postedOn);
   let truncated = false;
   for (let offset = 0; offset < 2000; offset += 20) {
     const response = await fetchSource(`${base}/jobs`, { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: "" }) });
     const data = await response.json() as any;
     if (!Array.isArray(data.jobPostings)) throw new Error("Workday 返回结构已变更");
-    jobs.push(...(data.jobPostings ?? []));
-    if (jobs.length >= 50 && data.jobPostings.every((j:any) => !hasPublicationDate(relativePostedAt(j.postedOn)))) break;
-    if (jobs.length >= Number(data.total ?? jobs.length) || !(data.jobPostings ?? []).length) break;
-    if (data.jobPostings.every((j:any) => isOlderThanCrawlWindow(relativePostedAt(j.postedOn)))) break;
+    const rows = data.jobPostings;
+    todayJobs.push(...rows.filter((job: any) => selection.accept(posted(job), job.externalPath)));
+    if (rows.length < 20 || offset + rows.length >= Number(data.total ?? Infinity)) { completePostingScan(); break; }
+    if (selection.stop(rows.map(posted))) break;
     if (offset === 1980) truncated = true;
   }
-  const todayJobs = selectPostingRows<any>(jobs, job => relativePostedAt(job.postedOn));
   const results = await mapDetails<any, JobRecord>(todayJobs, job => [job.externalPath, job.updatedAt, job.title, job.locationsText, relativePostedAt(job.postedOn)], async job => {
         const detailResponse = await fetchSource(`${base}${job.externalPath}`);
         const detail = (await detailResponse.json() as any).jobPostingInfo ?? {};
         if (!detail.jobDescription || !detail.title) throw new Error(`Workday 职位详情缺失：${job.externalPath}`);
         const canonical = detail.externalUrl || `${url.protocol}//${url.host}${url.pathname.replace(/\/$/, "")}${job.externalPath}`;
         return {
-          externalId: clean(detail.jobReqId || detail.jobPostingId || job.externalPath), company: source.name,
+          externalId: clean(job.externalPath || detail.jobReqId || detail.jobPostingId), company: source.name,
           title: clean(detail.title || job.title), canonicalUrl: canonical, applyUrl: canonical,
           location: clean(detail.location || job.locationsText) || "未注明", workplaceType: clean(detail.remoteType),
           employmentType: clean(detail.timeType), department: clean(detail.jobFamily), salary: clean(detail.compensation),
@@ -186,8 +191,9 @@ async function workable(source: SourceRecord): Promise<JobRecord[]> {
     const data = await response.json() as any, rows = data.results ?? data.jobs;
     if (!Array.isArray(rows)) throw new Error("Workable 接口缺少职位列表，不能视为没有新职位");
     const published = (job: any) => clean(job.published || job.published_at) || null;
-    selected.push(...rows.filter((job: any) => selection.accept(published(job))));
-    if (!data.nextPage || !rows.length || selection.stop(rows.map(published))) break;
+    selected.push(...rows.filter((job: any) => selection.accept(published(job), job.shortcode)));
+    if (!data.nextPage || !rows.length) { completePostingScan(); break; }
+    if (selection.stop(rows.map(published))) break;
     if (data.nextPage === token) throw new Error("Workable 返回重复分页标记");
     token = data.nextPage;
     if (page === 99) throw new Error("Workable 分页超过上限");
@@ -303,9 +309,14 @@ async function crawlRaw(source: SourceRecord): Promise<CrawlBatch> {
 export async function crawlSource(source: SourceRecord): Promise<CrawlBatch> {
   return withCrawlWindow(currentCrawlWindow(), async () => {
   const jobs = await crawlRaw(source);
-  const unknown = jobs.filter(j => !hasPublicationDate(j.postedAt)).length;
+  const context = ledger.getStore();
   const warnings = [...(jobs.warnings ?? [])];
-  if (unknown) warnings.push(`发布日期未知：本轮最多取前 50 条；通过筛选后按首次发现时间保留 7 天，不计入今日发布`);
-  return Object.assign(selectPostingRows(jobs, j => j.postedAt).map(job => hasPublicationDate(job.postedAt) ? job : { ...job, postedAt: null }), warnings.length ? { warnings } : {});
+  const date = (job: JobRecord) => job.postedAt;
+  const kind = (job: JobRecord) => job.dateKind;
+  const key = (job: JobRecord) => job.externalId || job.canonicalUrl;
+  const selected = selectPostingRows(jobs, date, key, kind, !context?.rowsSeen);
+  if (context?.untracked || !context && jobs.some(job => !hasPublicationDate(job.postedAt))) warnings.push("未提供发布日期，无法追踪新增");
+  return Object.assign(selected.filter(job => isCrawlCandidate(job.postedAt, job.dateKind)).map(job =>
+    hasPublicationDate(job.postedAt) ? job : { ...job, postedAt: null }), warnings.length ? { warnings } : {});
   });
 }

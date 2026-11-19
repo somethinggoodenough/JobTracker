@@ -11,7 +11,8 @@ export function crawlMetrics() {
     cacheHits: 0, cacheMisses: 0, throttled: 0, timeouts: 0, dbMs: 0, crawlMs: 0, aiMs: 0,
     lastRequest: null as CrawlRequest | null, activeRequests: 0, maxResponseBytes: 0,
     deadlineHit: false, localHealth: null as LocalCrawlerHealth | null, localHeapPeakMb: 0,
-    workdayCooldown: null as WorkdayRateLimit | null };
+    workdayCooldown: null as WorkdayRateLimit | null,
+    postingScan: null as { count: number; complete: boolean; newIds: number; untracked: boolean } | null };
 }
 export type CrawlMetrics = ReturnType<typeof crawlMetrics>;
 type Group = { key: string; limit: number };

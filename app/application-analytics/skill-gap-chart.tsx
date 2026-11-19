@@ -1,8 +1,9 @@
-import { useId } from "react";
+import { useId, useState } from "react";
 import { OUTCOME_STYLE, responseCounts, skillGaps } from "@/lib/application-analytics-view";
 import type { AnalyticsItem } from "@/lib/application-analytics";
 import { useLanguage } from "../language-provider";
 import { ChartCard, DataTable, EmptyChart } from "./shared";
+import { Action, ErrorLine, plannerApi } from "../planner/shared";
 
 export default function SkillGapChart({ items, active, selected, onSelect }: {
   items: readonly AnalyticsItem[]; active: ReadonlySet<number> | null; selected?: string; onSelect: (skill: string) => void;
@@ -10,6 +11,9 @@ export default function SkillGapChart({ items, active, selected, onSelect }: {
   const { t } = useLanguage();
   const title = t("技能缺口");
   const tooltipPrefix = useId();
+  const [created, setCreated] = useState<string[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState("");
   const rows = skillGaps(items);
   const max = rows[0]?.total ?? 1;
   const includedColor = OUTCOME_STYLE.ghosted.color;
@@ -56,5 +60,18 @@ export default function SkillGapChart({ items, active, selected, onSelect }: {
       </tr>;
     })}
   </DataTable>;
-  return <ChartCard title={title} description={t("JD 出现最多的 15 项技能；未选择简历的申请计入「简历没写」。")} chart={chart} table={rows.length ? table : chart} />;
+  async function createProject(skill: string) {
+    setCreating(true); setError("");
+    try { await plannerApi("skills", "POST", { skill }); setCreated(current => [...current, skill]); }
+    catch (error) { setError(error instanceof Error ? error.message : "计划操作失败，请重试"); }
+    finally { setCreating(false); }
+  }
+  return <div className="min-w-0 space-y-2">
+    <ChartCard title={title} description={t("JD 出现最多的 15 项技能；未选择简历的申请计入「简历没写」。")} chart={chart} table={rows.length ? table : chart} />
+    {selected && <div className="flex flex-wrap items-center gap-2 text-sm">
+      <span className="break-words">{selected}</span>
+      {created.includes(selected) ? <a className="text-radar-blue underline" href="/planner">{t("已创建，打开计划")}</a> :
+        <Action disabled={creating} onClick={() => void createProject(selected)}>{t("创建学习项目")}</Action>}
+    </div>}<ErrorLine error={error} />
+  </div>;
 }

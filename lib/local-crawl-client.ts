@@ -7,6 +7,7 @@ import { crawlPerformance, type CrawlMetrics, type LocalCrawlerHealth } from "./
 import type { SourceRecord } from "./job-types";
 import { DeadlineError, withDeadline } from "./deadline";
 import { WorkdayRateLimitError } from "./workday-rate-limit";
+import { copyPostingScan, ledger } from "./posting-ledger";
 
 type CrawlOptions = { concurrency: number; crawlId: string; deadlineMs: number; sourceTimeoutMs: number };
 
@@ -58,6 +59,7 @@ export async function crawlForSync(db: D1Database, source: SourceRecord,
   performance: NonNullable<ReturnType<typeof crawlPerformance.getStore>>, options: CrawlOptions) {
   const local = options.concurrency > 0 ? localCrawler() : null;
   if (!local || !isBuiltInBoard(source)) return executeCrawl(db, source, performance);
+  const context = ledger.getStore();
 
   let response: Response;
   let result: LocalCrawlResult & { code?: string; health?: LocalCrawlerHealth };
@@ -66,7 +68,8 @@ export async function crawlForSync(db: D1Database, source: SourceRecord,
       method: "POST",
       headers: { "content-type": "application/json", authorization: local.authorization },
       body: JSON.stringify({ source, window: currentCrawlWindow(), coarse: currentScreeningRules().coarse,
-        concurrency: options.concurrency, crawlId: options.crawlId, deadlineMs: options.deadlineMs }),
+        concurrency: options.concurrency, crawlId: options.crawlId, deadlineMs: options.deadlineMs,
+        postingLedger: context ? { known: [...context.known], hasSnapshot: context.hasSnapshot } : undefined }),
       signal: currentSyncSignal(),
     });
     result = await response.json();
@@ -85,5 +88,6 @@ export async function crawlForSync(db: D1Database, source: SourceRecord,
   if (result.sourceDeadline) throw new DeadlineError("单个来源抓取", options.sourceTimeoutMs);
   if (result.metrics?.workdayCooldown) throw new WorkdayRateLimitError(result.metrics.workdayCooldown);
   if (result.error) throw new Error(result.error);
+  if (context && result.postingScan) copyPostingScan(context, result.postingScan);
   return Object.assign(result.jobs, result.warnings ? { warnings: result.warnings } : {});
 }

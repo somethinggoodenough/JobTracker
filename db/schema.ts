@@ -31,6 +31,9 @@ export const jobs = sqliteTable("jobs", {
   description: text("description").notNull().default(""),
   postedAt: text("posted_at").notNull(),
   publicationVerified: integer("publication_verified", { mode: "boolean" }).notNull().default(false),
+  freshness: text("freshness").notNull().default("uncertain"),
+  freshnessReason: text("freshness_reason"),
+  appearedAfter: text("appeared_after"),
   aiPolicy: text("ai_policy"),
   aiAnalysis: text("ai_analysis"),
   aiModel: text("ai_model"),
@@ -90,6 +93,105 @@ export const crawlProviderCooldowns = sqliteTable("crawl_provider_cooldowns", {
   address: text("address").notNull(),
   retryAfter: text("retry_after"),
   retryAt: integer("retry_at").notNull(),
+});
+
+export const sourcePostings = sqliteTable("source_postings", {
+  sourceId: integer("source_id").notNull().references(() => sources.id, { onDelete: "cascade" }),
+  postingKey: text("posting_key").notNull(),
+  firstSeenAt: text("first_seen_at").notNull(),
+  lastSeenAt: text("last_seen_at").notNull(),
+  lastPosition: integer("last_position").notNull(),
+  firstRunId: integer("first_run_id"),
+}, t => [primaryKey({ columns: [t.sourceId, t.postingKey] }), index("source_postings_seen_idx").on(t.sourceId, t.lastSeenAt)]);
+
+export const sourceSnapshots = sqliteTable("source_snapshots", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  sourceId: integer("source_id").notNull().references(() => sources.id, { onDelete: "cascade" }),
+  runId: integer("run_id").notNull().references(() => scrapeRuns.id),
+  crawledAt: text("crawled_at").notNull(),
+  observedCount: integer("observed_count").notNull(),
+  scanComplete: integer("scan_complete").notNull(),
+  status: text("status").notNull(),
+}, t => [index("source_snapshots_time_idx").on(t.sourceId, t.crawledAt),
+  uniqueIndex("source_snapshots_run_idx").on(t.sourceId, t.runId)]);
+
+function plannerFields() {
+  return {
+    version: integer("version").notNull().default(1),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  };
+}
+
+export const plannerGoals = sqliteTable("planner_goals", {
+  id: integer("id").primaryKey({ autoIncrement: true }), ...plannerFields(),
+  title: text("title").notNull(), why: text("why").notNull().default(""),
+  priority: integer("priority").notNull().default(2), weeklyTargetMinutes: integer("weekly_target_minutes"),
+  status: text("status").notNull().default("active"),
+});
+
+export const plannerProjects = sqliteTable("planner_projects", {
+  id: integer("id").primaryKey({ autoIncrement: true }), ...plannerFields(),
+  goalId: integer("goal_id").references(() => plannerGoals.id, { onDelete: "set null" }),
+  kind: text("kind").notNull(), title: text("title").notNull(),
+  description: text("description").notNull().default(""), status: text("status").notNull().default("active"),
+  repoPath: text("repo_path"), lastActivityAt: text("last_activity_at").notNull(),
+}, t => [index("planner_projects_goal_idx").on(t.goalId)]);
+
+export const plannerMilestones = sqliteTable("planner_milestones", {
+  id: integer("id").primaryKey({ autoIncrement: true }), ...plannerFields(),
+  projectId: integer("project_id").notNull().references(() => plannerProjects.id, { onDelete: "cascade" }),
+  title: text("title").notNull(), doneCriteria: text("done_criteria").notNull().default(""),
+  targetOn: text("target_on"), position: integer("position").notNull().default(0),
+  status: text("status").notNull().default("open"), doneAt: text("done_at"), sourceRef: text("source_ref"),
+}, t => [index("planner_milestones_project_idx").on(t.projectId, t.position), uniqueIndex("planner_milestones_source_idx").on(t.projectId, t.sourceRef)]);
+
+export const plannerTasks = sqliteTable("planner_tasks", {
+  id: integer("id").primaryKey({ autoIncrement: true }), ...plannerFields(),
+  projectId: integer("project_id").notNull().references(() => plannerProjects.id, { onDelete: "cascade" }),
+  milestoneId: integer("milestone_id").references(() => plannerMilestones.id, { onDelete: "set null" }),
+  title: text("title").notNull(), notes: text("notes").notNull().default(""),
+  status: text("status").notNull().default("next"), dueOn: text("due_on"),
+  estimateMinutes: integer("estimate_minutes"), actualMinutes: integer("actual_minutes"),
+  blockedReason: text("blocked_reason"), checkBackOn: text("check_back_on"), unblockedAt: text("unblocked_at"),
+  rolloverCount: integer("rollover_count").notNull().default(0), delayReason: text("delay_reason"),
+  sourceRef: text("source_ref"), position: integer("position").notNull().default(0),
+  startedAt: text("started_at"), doneAt: text("done_at"),
+}, t => [index("planner_tasks_project_idx").on(t.projectId, t.milestoneId, t.position),
+  index("planner_tasks_status_idx").on(t.status), uniqueIndex("planner_tasks_source_idx").on(t.projectId, t.sourceRef)]);
+
+export const plannerEntries = sqliteTable("planner_entries", {
+  id: integer("id").primaryKey({ autoIncrement: true }), ...plannerFields(),
+  projectId: integer("project_id").references(() => plannerProjects.id, { onDelete: "set null" }),
+  taskId: integer("task_id").references(() => plannerTasks.id, { onDelete: "set null" }),
+  kind: text("kind").notNull(), body: text("body").notNull(),
+  links: text("links").notNull().default("[]"), skills: text("skills").notNull().default("[]"),
+  metric: text("metric"), cause: text("cause"), resumeCandidate: integer("resume_candidate").notNull().default(0),
+}, t => [index("planner_entries_project_idx").on(t.projectId, t.createdAt)]);
+
+export const plannerCards = sqliteTable("planner_cards", {
+  id: integer("id").primaryKey({ autoIncrement: true }), ...plannerFields(),
+  entryId: integer("entry_id").references(() => plannerEntries.id, { onDelete: "set null" }),
+  projectId: integer("project_id").notNull().references(() => plannerProjects.id, { onDelete: "cascade" }),
+  question: text("question").notNull(), answer: text("answer").notNull(),
+  intervalDays: integer("interval_days").notNull().default(1), dueOn: text("due_on").notNull(), lastResult: text("last_result"),
+}, t => [index("planner_cards_due_idx").on(t.dueOn, t.projectId)]);
+
+export const plannerDays = sqliteTable("planner_days", {
+  day: text("day").primaryKey(), availableMinutes: integer("available_minutes"),
+  focusTaskIds: text("focus_task_ids").notNull().default("[]"),
+  startedAt: text("started_at"), closedAt: text("closed_at"), note: text("note").notNull().default(""),
+});
+
+export const plannerReviews = sqliteTable("planner_reviews", {
+  week: text("week").primaryKey(), completedAt: text("completed_at"), notes: text("notes").notNull().default("{}"),
+  version: integer("version").notNull().default(1),
+});
+
+export const plannerSettings = sqliteTable("planner_settings", {
+  id: integer("id").primaryKey(), maxActiveProjects: integer("max_active_projects").default(3),
+  maxDoingTasks: integer("max_doing_tasks").default(2), version: integer("version").notNull().default(1),
+  updatedAt: text("updated_at").notNull(),
 });
 
 // Deliberately independent of jobs/sources: a saved application outlives crawl retention.

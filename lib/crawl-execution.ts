@@ -4,6 +4,7 @@ import type { SourceRecord } from "./job-types";
 import { crawlSource } from "./crawler";
 import { crawlPerformance, type CrawlMetrics } from "./crawl-performance";
 import { detailCache } from "./detail-cache";
+import type { PostingScan } from "./posting-ledger";
 
 export const sourceNamespace = (source: SourceRecord) => JSON.stringify([1, source.id, source.name, source.url, source.adapter]);
 
@@ -18,5 +19,5 @@ export function executeCrawl(db: D1Database, source: SourceRecord, performance: 
   return crawlPerformance.run(performance, () => detailCache.run({ db, namespace: sourceNamespace(source) }, () => crawlSource(source)));
 }
 
-export type LocalCrawlResult = { jobs: Awaited<ReturnType<typeof crawlSource>>; warnings?: string[]; metrics?: CrawlMetrics;
+export type LocalCrawlResult = { jobs: Awaited<ReturnType<typeof crawlSource>>; warnings?: string[]; metrics?: CrawlMetrics; postingScan?: PostingScan;
   error?: string; sourceDeadline?: boolean; heapPeakMb?: number };

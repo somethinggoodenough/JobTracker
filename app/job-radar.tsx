@@ -5,17 +5,19 @@ import { ApplicationEditor, ApplicationTracker } from "./application-tracker";
 import AiFilterPanel from "./ai-filter-panel";
 import DailyFortuneCard from "./daily-fortune-card";
 import ResumeManager from "./resume-manager";
+import PlannerPanel from "./planner/planner-panel";
 import { ClassificationTags, JobAnalysisPanel } from "@/components/job-classification";
 import { careerLevels, jobCategories, type JobAnalysis } from "@/lib/classification-types";
 import type { FormEvent, ReactNode } from "react";
 import {
   ArrowUpRight, Building2, Check, ChevronRight, Clock3, Database, ExternalLink,
   Globe2, Layers3, MapPin, Plus, Radar, RefreshCw, Search, Settings2, Sparkles,
-  Trash2, X, Zap, ClipboardList, FileText,
+  Trash2, X, Zap, ClipboardList, FileText, ListChecks,
 } from "lucide-react";
 import { useLanguage } from "./language-provider";
 import type { Translate } from "@/lib/ui-language";
 import type { WorkdayRateLimit } from "@/lib/workday-rate-limit";
+import type { Freshness, FreshnessReason } from "@/lib/posting-ledger";
 
 type Job = {
   id: number; application_id?: number | null; company: string; title: string; location: string; workplace_type?: string;
@@ -23,11 +25,12 @@ type Job = {
   posted_at: string; first_seen_at: string; apply_url: string; canonical_url: string; source_name: string;
   classification: JobAnalysis | null;
   publication_verified: number;
+  freshness?: Freshness; appeared_after?: string | null; freshness_reason?: FreshnessReason | null;
 };
 type Source = { id: number; name: string; url: string; adapter: string; enabled: number; job_count: number; last_success_at?: string; last_error?: string };
 type Stats = { total: number; companies: number; new_today: number };
 type Pages = { page: number; pageSize: number; total: number; totalPages: number };
-type View = "jobs" | "applications" | "resumes" | "sources" | "runs";
+type View = "jobs" | "applications" | "resumes" | "sources" | "runs" | "planner";
 type Run = { status: string; started_at: string; jobs_added: number; jobs_deleted: number } | null;
 type SourceProgress = {
   source_id: number; name: string; url: string; stage: string; started_at: string | null;
@@ -74,6 +77,7 @@ export default function JobRadar({ view = "jobs" }: { view?: View }) {
   const [mode, setMode] = useState("");
   const [category, setCategory] = useState(""), [level, setLevel] = useState("");
   const [companyCountry, setCompanyCountry] = useState("");
+  const [includeBaseline, setIncludeBaseline] = useState(false);
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState<Pages>({ page: 1, pageSize: 50, total: 0, totalPages: 1 });
   const [searchFilters, setSearchFilters] = useState({ query: "", location: "" });
@@ -103,6 +107,7 @@ export default function JobRadar({ view = "jobs" }: { view?: View }) {
     const requestId = ++loadId.current;
     const params = new URLSearchParams({ page: String(page), q: searchFilters.query, location: searchFilters.location,
       type: mode, period: "all", category, level, companyCountry });
+    if (includeBaseline) params.set("freshness", "published,new,uncertain,baseline");
     const [jobResponse, sourceResponse] = await Promise.all([fetch(`/api/jobs?${params}`), fetch("/api/sources")]);
     const jobData = await jobResponse.json() as { jobs?: Job[]; stats?: Stats; latestRun?: Run; pagination?: Pages; error?: string };
     const sourceData = await sourceResponse.json() as { sources?: Source[]; error?: string };
@@ -111,7 +116,7 @@ export default function JobRadar({ view = "jobs" }: { view?: View }) {
     setJobs(jobData.jobs ?? []); setStats(jobData.stats ?? { total: 0, companies: 0, new_today: 0 }); setLatestRun(jobData.latestRun ?? null);
     if (jobData.pagination) { setPages(jobData.pagination); if (jobData.pagination.page !== page) setPage(jobData.pagination.page); }
     setSources(sourceData.sources ?? []); setLoading(false);
-  }, [page, searchFilters, mode, view, category, level, companyCountry]);
+  }, [page, searchFilters, mode, view, category, level, companyCountry, includeBaseline]);
   const latestLoad = useRef(load);
   latestLoad.current = load;
 
@@ -211,14 +216,14 @@ export default function JobRadar({ view = "jobs" }: { view?: View }) {
       <Directory view={view} mobile />
 
       <main className="mx-auto max-w-[1500px] px-5 py-7 lg:px-8 lg:py-10">
-        {(!!progress?.sources.length || isSyncing) && <SyncProgressPanel progress={progress} syncing={isSyncing} error={progressError} />}
+        {(view !== "planner" && !!progress?.sources.length || isSyncing) && <SyncProgressPanel progress={progress} syncing={isSyncing} error={progressError} />}
         {notice && <div role="status" className="mb-4 flex items-center justify-between rounded-xl border border-radar-border bg-radar-soft px-4 py-3 text-sm text-radar-strong"><span>{typeof notice === "string" ? t(notice) : t(notice.message, ...notice.counts)}</span><button onClick={() => setNotice("")} aria-label={t("关闭提示")}><X size={15} /></button></div>}
-        {view === "resumes" ? <ResumeManager /> : view === "sources" ? <SourcesPage sources={sources} onChanged={load} /> : view === "runs" ? <HistoryPanel active={!!runActive} status={progress?.run?.status} /> : view === "applications" ? <ApplicationTracker refreshKey={applicationRefresh} onOpen={setApplicationId} /> : <>
+        {view === "planner" ? <PlannerPanel /> : view === "resumes" ? <ResumeManager /> : view === "sources" ? <SourcesPage sources={sources} onChanged={load} /> : view === "runs" ? <HistoryPanel active={!!runActive} status={progress?.run?.status} /> : view === "applications" ? <ApplicationTracker refreshKey={applicationRefresh} onOpen={setApplicationId} /> : <>
         <section className="mb-8 grid gap-5 xl:grid-cols-[1fr_410px]">
           <div>
             <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[.16em] text-radar-muted"><span className="size-2 rounded-full bg-radar-accent shadow-[0_0_0_5px_var(--color-radar-hover)]" />{t("每小时自动更新")}</div>
             <h1 className="max-w-3xl text-[clamp(2rem,4vw,4rem)] font-semibold leading-[1.08] tracking-[-.05em]">{t("所有机会，一页页发现。")}</h1>
-            <p className="mt-5 max-w-xl text-sm leading-6 text-radar-muted">{t("有发布日期的职位只抓纽约时间当天；没有发布日期时，每个来源取前 50 条并按首次发现时间保留 7 天。每页 50 条，点击查看 JD；点击「＋」跟踪申请。")}</p>
+            <p className="mt-5 max-w-xl text-sm leading-6 text-radar-muted">{t("有日期的职位按纽约当天抓取。无日期职位通过列表 ID 判定是否新出现。点击职位查看 JD，点击「＋」跟踪申请。")}</p>
           </div>
           <div className="status-card">
             <div className="flex items-start justify-between"><div><p className="eyebrow">{t("系统状态")}</p><h2 className="mt-1 text-xl font-semibold">{t("雷达正常运行")}</h2></div><div className="grid size-12 place-items-center rounded-full bg-radar-hover text-radar-strong"><Zap size={20} fill="currentColor" /></div></div>
@@ -230,7 +235,7 @@ export default function JobRadar({ view = "jobs" }: { view?: View }) {
         <AiFilterPanel active={!!isSyncing} onReview={() => startSync(true)} />
         <section className="mb-6 grid grid-cols-3 overflow-hidden rounded-2xl border border-radar-line bg-white/70">
           <Metric icon={<Layers3 />} value={stats.total ?? 0} label={t("当前职位")} />
-          <Metric icon={<Sparkles />} value={stats.new_today ?? 0} label={t("今日发布 · 纽约时间")} />
+          <Metric icon={<Sparkles />} value={stats.new_today ?? 0} label={t("今日新增 · 纽约时间")} />
           <Metric icon={<Building2 />} value={stats.companies ?? 0} label={t("活跃公司")} />
         </section>
 
@@ -248,12 +253,15 @@ export default function JobRadar({ view = "jobs" }: { view?: View }) {
             <label className="filter-field"><Layers3 size={17} /><select aria-label={t("岗位分类")} value={category} onChange={e => { setCategory(e.target.value); setPage(1); }}><option value="">{t("全部岗位分类")}</option>{Object.entries(jobCategories).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
             <label className="filter-field"><Sparkles size={17} /><select aria-label={t("职业级别")} value={level} onChange={e => { setLevel(e.target.value); setPage(1); }}><option value="">{t("全部初级类别")}</option>{Object.entries(careerLevels).map(([key, label]) => <option key={key} value={key}>{t(label)}</option>)}</select></label>
           </div>
+          <label className="mt-3 flex items-center gap-2 px-1 text-sm text-radar-muted">
+            <input type="checkbox" role="switch" checked={includeBaseline} onChange={event => { setIncludeBaseline(event.target.checked); setPage(1); }} />{t("包含存量")}
+          </label>
         </section>
 
         <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_330px]">
           <aside className="space-y-4 xl:col-start-2 xl:row-start-1">
             <DailyFortuneCard />
-            <div className="hidden rounded-2xl border border-radar-line bg-radar-tint p-6 xl:block"><p className="eyebrow">{t("数据保留")}</p><p className="mt-3 text-3xl font-semibold tracking-[-.04em]">7 × 24h</p><p className="mt-2 text-sm leading-6 text-radar-muted">{t("已知发布日期按发布日保留；日期未知取前 50 条，按首次发现时间保留。重复抓取不会重置期限，未知日期不计入今日发布。")}</p></div>
+            <div className="hidden rounded-2xl border border-radar-line bg-radar-tint p-6 xl:block"><p className="eyebrow">{t("数据保留")}</p><p className="mt-3 text-3xl font-semibold tracking-[-.04em]">7 × 24h</p><p className="mt-2 text-sm leading-6 text-radar-muted">{t("有日期按发布日期保留，无日期按首次发现时间保留。只有确认新出现的无日期职位计入今日新增。")}</p></div>
           </aside>
           <section className="min-w-0 xl:col-start-1 xl:row-start-1">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-radar-subtle">{t("共 {0} 个职位 · 第 {1} / {2} 页", pages.total, pages.page, pages.totalPages)}</p><p className="text-xs text-radar-subtle">{t("每页 50 条 · 按发布时间排序")}</p></div>
@@ -278,14 +286,15 @@ function Directory({ view, mobile = false }: { view: View; mobile?: boolean }) {
     { view: "jobs", href: "/", label: t("全部职位"), icon: <Layers3 size={18} /> },
     { view: "applications", href: "/applications", label: t("申请职位状态"), icon: <ClipboardList size={18} /> },
     { view: "resumes", href: "/resumes", label: t("简历管理"), icon: <FileText size={18} /> },
+    { view: "planner", href: "/planner", label: t("计划"), icon: <ListChecks size={18} /> },
     { view: "sources", href: "/sources", label: t("招聘来源"), icon: <Globe2 size={18} /> },
     { view: "runs", href: "/runs", label: t("同步记录"), icon: <Clock3 size={18} /> },
   ];
   return <aside className={mobile ? "border-b border-radar-line bg-radar-tint px-3 py-2 md:hidden" : "fixed inset-y-0 left-0 z-40 hidden w-[208px] flex-col border-r border-radar-line bg-radar-tint p-5 md:flex"}>
     {!mobile && <><a href="/" className="mb-10 mt-2 flex items-center gap-2 font-semibold text-radar-blue"><Radar size={24} />{t("求职雷达")}</a><p className="eyebrow mb-4">{t("工作空间")}</p></>}
     {/* Native links avoid the local Vinext client router's failing navigation callback. */}
-    <nav aria-label={t("主目录")} className={mobile ? "grid grid-cols-5 gap-1" : "space-y-2"}>{links.map(link => <a key={link.view} href={link.href} aria-current={view === link.view ? "page" : undefined} className={`flex rounded-xl text-sm transition ${mobile ? "flex-col items-center justify-center gap-1 px-1 py-2 text-center text-xs" : "items-center gap-2 px-3 py-3"} ${view === link.view ? "bg-radar-blue font-semibold text-white shadow-sm" : "text-radar-muted hover:bg-white"}`}>{link.icon}<span>{link.label}</span></a>)}</nav>
-    {!mobile && <div className="mt-auto rounded-2xl border border-radar-line bg-white/70 p-4 text-xs leading-6 text-radar-muted">{t("每天的新机会")}<br /><strong className="text-radar-strong">{t("已知日期抓当天")}<br />{t("未知日期前 50 条")}</strong><br />{t("保留 7 天 · 纽约日期")}</div>}
+    <nav aria-label={t("主目录")} className={mobile ? "grid grid-cols-6 gap-1" : "space-y-2"}>{links.map(link => <a key={link.view} href={link.href} aria-current={view === link.view ? "page" : undefined} className={`flex min-w-0 rounded-xl text-sm transition ${mobile ? "flex-col items-center justify-center gap-1 px-1 py-2 text-center text-[11px] [overflow-wrap:anywhere]" : "items-center gap-2 px-3 py-3"} ${view === link.view ? "bg-radar-blue font-semibold text-white shadow-sm" : "text-radar-muted hover:bg-white"}`}>{link.icon}<span>{link.label}</span></a>)}</nav>
+    {!mobile && <div className="mt-auto rounded-2xl border border-radar-line bg-white/70 p-4 text-xs leading-6 text-radar-muted">{t("每天的新机会")}<br /><strong className="text-radar-strong">{t("已知日期抓当天")}<br />{t("未知日期比较列表快照")}</strong><br />{t("保留 7 天 · 纽约日期")}</div>}
   </aside>;
 }
 
@@ -390,6 +399,8 @@ function SyncProgressPanel({ progress, syncing, error }: { progress: SyncProgres
       {!!metrics?.lastRequest && <p className="mt-1 break-all text-xs text-radar-subtle">{t("最后请求：{0} · 用时 {1}", metrics.lastRequest.address, elapsed(metrics.lastRequest.startedAt, metrics.lastRequest.finishedAt ?? row.finished_at))}</p>}
       {!!metrics?.maxResponseBytes && <p className="mt-1 text-xs text-radar-subtle">{t("最大响应 {0} MiB", (metrics.maxResponseBytes / 1048576).toFixed(2))}</p>}
       {metrics?.localHealth && <p className="mt-1 text-xs text-radar-subtle">{t("本地进程：{0} 个来源，堆 {1}/{2} MiB，事件循环 p99 延迟 {3} ms", metrics.localHealth.active, metrics.localHealth.heapUsedMb.toFixed(1), metrics.localHealth.heapLimitMb.toFixed(1), metrics.localHealth.eventLoopLagMs.toFixed(1))}</p>}
+      {metrics?.postingScan && <p className="mt-1 text-xs text-radar-subtle">{t("已扫描 {0} 条（{1}），首次见到 {2} 个编号",
+        metrics.postingScan.count, t(metrics.postingScan.complete ? "完整" : "截断"), metrics.postingScan.newIds)}</p>}
       {row.error && <p className={`mt-1 break-words text-xs ${row.stage === "success" ? "text-radar-subtle" : "text-red-700"}`}>{t(row.error)}</p>}
     </li>;
   }
@@ -418,7 +429,7 @@ function JobCard({ job, onClick, onAdd, adding }: { job: Job; onClick: () => voi
       <div className="flex gap-4"><div className="company-mark">{job.company.slice(0, 2).toUpperCase()}</div><div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-medium text-radar-subtle">{job.company}</p><h3 className="mt-1 text-[17px] font-semibold tracking-[-.02em] text-radar-ink group-hover:text-radar-blue-hover">{job.title}</h3></div><ChevronRight className="mt-2 shrink-0 text-radar-faint" size={19} /></div>
         <ClassificationTags analysis={job.classification} />
-        {!job.publication_verified && <span className="tag mt-2 !bg-[#fff4df] !text-[#85602d]">{t("发布日期未知 · 按首次发现保留")}</span>}
+        <FreshnessBadge job={job} />
         <div className="mt-4 flex flex-wrap gap-2"><Tag icon={<MapPin />} text={job.location === "未注明" ? t("未注明") : job.location} />{job.workplace_type && <Tag text={job.workplace_type} />}{job.employment_type && <Tag text={job.employment_type} />}{job.salary && <Tag text={job.salary} />}</div>
         <div className="mt-4 flex items-center justify-between text-xs text-radar-subtle"><span>{job.department || job.source_name}</span><span>{job.publication_verified ? relativeTime(t, job.posted_at) : t("首次发现 {0}", relativeTime(t, job.first_seen_at))}</span></div>
       </div></div>
@@ -428,6 +439,22 @@ function JobCard({ job, onClick, onAdd, adding }: { job: Job; onClick: () => voi
 }
 
 function Tag({ icon, text }: { icon?: ReactNode; text: string }) { return <span className="tag">{icon && <span className="[&>svg]:size-3">{icon}</span>}{text}</span>; }
+
+function FreshnessBadge({ job }: { job: Job }) {
+  const { t, locale } = useLanguage();
+  const format = (stamp: string, time = false) => new Date(stamp).toLocaleString(locale, { timeZone: "America/New_York",
+    year: "numeric", month: "short", day: "numeric", ...(time ? { hour: "2-digit", minute: "2-digit" } : {}) });
+  const published = job.publication_verified === 1;
+  const today = (stamp: string | number) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(stamp));
+  if (published) return <span className="tag mt-2">{today(job.posted_at) === today(Date.now()) ? t("今日发布") : format(job.posted_at)}</span>;
+  const reasons = { gap: "距离上次有效扫描较久", scan_range: "超出上次扫描范围", other_source: "其他来源较早已发现",
+    listing_date: "收录时间较早，无法确认新出现", legacy: "历史数据无法确认新出现", untracked: "缺少可比对的职位编号或快照" };
+  const range = job.appeared_after ? t("在 {0} 与 {1} 之间出现", format(job.appeared_after, true), format(job.first_seen_at, true)) : "";
+  const label = job.freshness === "baseline" ? "存量" : job.freshness === "new" ? "新出现" : "疑似新增";
+  const why = job.freshness_reason ? t(reasons[job.freshness_reason] ?? "历史数据无法确认新出现") : "";
+  return <span className={`tag mt-2 ${job.freshness === "new" ? "" : "!bg-gray-100 !text-gray-700"}`}
+    title={[why, range].filter(Boolean).join(" · ")}>{t(label)}</span>;
+}
 
 function EmptyState({ hasSources, onAdd, onSync }: { hasSources: boolean; onAdd: () => void; onSync: () => void }) {
   const { t } = useLanguage();
@@ -443,6 +470,7 @@ function JobDetail({ job, onClose }: { job: Job; onClose: () => void }) {
       <div className="flex items-center justify-between"><span className="tag">{job.source_name}</span><button onClick={onClose} aria-label={t("关闭职位详情")} className="round-button"><X size={18} /></button></div>
       <div className="mt-10 flex gap-5"><div className="company-mark !size-14 !rounded-2xl">{job.company.slice(0,2).toUpperCase()}</div><div><p className="text-sm text-radar-subtle">{job.company}</p><h2 className="mt-1 text-3xl font-semibold leading-tight tracking-[-.04em]">{job.title}</h2></div></div>
       <ClassificationTags analysis={job.classification} />
+      <FreshnessBadge job={job} />
       <div className="mt-6 flex flex-wrap gap-2"><Tag icon={<MapPin />} text={job.location === "未注明" ? t("未注明") : job.location} />{job.workplace_type && <Tag text={job.workplace_type} />}{job.employment_type && <Tag text={job.employment_type} />}{job.department && <Tag text={job.department} />}</div>
       <JobAnalysisPanel analysis={job.classification} />
       <div className="my-8 h-px bg-radar-line" /><div className="flex items-center justify-between"><h3 className="font-semibold">{t("职位描述")}</h3><span className="text-xs text-radar-subtle">{job.publication_verified ? t("发布于 ") : t("发布日期未知 · 首次发现于 ")}{new Date(job.publication_verified ? job.posted_at : job.first_seen_at).toLocaleDateString(locale)}</span></div>

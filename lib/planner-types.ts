@@ -1,0 +1,28 @@
+export const plannerCauses = ["underestimated", "environment", "unclear", "interrupted", "dependency", "other"] as const;
+export const plannerEntryKinds = ["progress", "insight", "mistake", "decision", "metric", "artifact"] as const;
+export const plannerTaskStates = ["next", "doing", "blocked", "done", "dropped"] as const;
+export const plannerProjectStates = ["active", "paused", "done", "dropped"] as const;
+export const plannerProjectKinds = ["project", "learning", "code"] as const;
+export const plannerIntervals = [1, 3, 7, 14, 30, 60];
+export const plannerCardResults = ["remembered", "fuzzy", "forgot"] as const;
+export const PLANNER_DEFAULT_MINUTES = 240;
+export type PlannerCause = typeof plannerCauses[number];
+export type CardResult = typeof plannerCardResults[number];
+export type PlannerCollection = "goals" | "projects" | "milestones" | "tasks" | "entries" | "cards";
+export type Project = { id: number; goal_id: number | null; kind: string; title: string; description: string;
+  status: string; last_activity_at: string; version: number; repo_path: string | null };
+export type Goal = { id: number; title: string; why: string; priority: number; status: string; weekly_target_minutes: number | null; created_at: string; version: number };
+export type Milestone = { id: number; project_id: number; title: string; done_criteria: string; target_on: string | null; status: string; position: number; version: number };
+export type Task = {
+  id: number; project_id: number; milestone_id: number | null; title: string; notes: string; status: string;
+  due_on: string | null; estimate_minutes: number | null; actual_minutes: number | null; blocked_reason: string | null;
+  check_back_on: string | null; unblocked_at: string | null; rollover_count: number; delay_reason: PlannerCause | null;
+  position: number; started_at: string | null; done_at: string | null; updated_at: string; version: number;
+};
+export type Metric = { name: string; before?: number; after: number; unit: string };
+export type Entry = { id: number; project_id: number | null; task_id: number | null; kind: string; body: string;
+  links: string[]; skills: string[]; metric: Metric | null; cause: PlannerCause | null; resume_candidate: number; created_at: string; version: number };
+export type Card = { id: number; project_id: number; entry_id: number | null; question: string; answer: string;
+  interval_days: number; due_on: string; last_result: CardResult | null; version: number };
+export type PlannerSettings = { max_active_projects: number | null; max_doing_tasks: number | null; version: number };
+export type PlannerState = { goals: Goal[]; projects: Project[]; milestones: Milestone[]; tasks: Task[]; cards: Card[] };

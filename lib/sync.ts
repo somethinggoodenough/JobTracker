@@ -14,9 +14,10 @@ import { withScreeningRules } from "./screening-context";
 import { crawlMetrics, requestLimiter, LOCAL_CRAWLER_CAPACITY } from "./crawl-performance";
 import { crawlForSync, usesLocalCrawler, localCrawlerDiagnostics, localCrawlerHealth, LocalCrawlerDisconnected } from "./local-crawl-client";
 import { DeadlineError, withDeadline } from "./deadline";
-import { recoverStaleSync, SYNC_HEARTBEAT_INTERVAL_MS, SYNC_HEARTBEAT_SOURCE } from "./sync-lifecycle";
+import { failedSourceSnapshots, recoverStaleSync, SYNC_HEARTBEAT_INTERVAL_MS, SYNC_HEARTBEAT_SOURCE } from "./sync-lifecycle";
 import { syncTuning } from "./sync-tuning";
 import { isWorkdayHost, readWorkdayCooldown, saveWorkdayCooldown, WORKDAY_REQUEST_GAP_MS, WorkdayRateLimitError } from "./workday-rate-limit";
+import { backfillPostingLedger, ledger, readPostingLedger, savePostingSnapshot } from "./posting-ledger";
 
 const DAY = 86_400_000;
 type SyncOptions = { reviewOnly?: boolean; signal?: AbortSignal };
@@ -76,6 +77,8 @@ async function runSyncWithSettings(options: SyncOptions, crawl: typeof crawlForS
 
   async function processRun(signal: AbortSignal) {
     throwIfSyncCancelled();
+    await backfillPostingLedger(db);
+    throwIfSyncCancelled();
     await seedDiscoveries(db);
     throwIfSyncCancelled();
     const [, deleted] = await db.batch([
@@ -84,6 +87,7 @@ async function runSyncWithSettings(options: SyncOptions, crawl: typeof crawlForS
       db.prepare("DELETE FROM job_candidates WHERE expires_at<=?").bind(now),
       db.prepare("UPDATE job_candidates SET claim_run_id=NULL WHERE claim_run_id IS NOT NULL"),
       db.prepare("DELETE FROM crawl_details WHERE expires_at<=?").bind(Date.now()),
+      db.prepare("DELETE FROM source_postings WHERE last_seen_at<?").bind(new Date(Date.parse(now) - 90 * DAY).toISOString()),
     ]);
     throwIfSyncCancelled();
     purged = deleted.meta.changes ?? 0;
@@ -142,6 +146,7 @@ async function runSyncWithSettings(options: SyncOptions, crawl: typeof crawlForS
       const metrics = crawlMetrics();
       const crawlId = `${runId}:${source.id}`;
       let crawlStarted = 0;
+      let posting: Awaited<ReturnType<typeof readPostingLedger>> | undefined;
       let processed = 0, sourceAdded = 0, sourceUpdated = 0, ignored = 0, total = 0, queued = 0;
       let lastSaved = 0;
       const saveProgress = async (stage: string, error: string | null = null) => {
@@ -172,10 +177,18 @@ async function runSyncWithSettings(options: SyncOptions, crawl: typeof crawlForS
         crawlStarted = Date.now();
         const sourceTimeoutMs = tuning.sourceTimeoutMs;
         const jobs = await withDeadline("单个来源抓取", sourceTimeoutMs, signal, sourceSignal =>
-          withSyncSignal(sourceSignal, () => crawl(db, source, { metrics, limit }, {
-            concurrency: workerRequests, crawlId, deadlineMs: crawlStarted + sourceTimeoutMs, sourceTimeoutMs,
-          }))).finally(() => { metrics.crawlMs = Date.now() - crawlStarted; });
+          withSyncSignal(sourceSignal, async () => {
+            posting = await readPostingLedger(db, source.id);
+            throwIfSyncCancelled();
+            return ledger.run(posting.context, () => crawl(db, source, { metrics, limit }, {
+              concurrency: workerRequests, crawlId, deadlineMs: crawlStarted + sourceTimeoutMs, sourceTimeoutMs,
+            }));
+          })).finally(() => { metrics.crawlMs = Date.now() - crawlStarted; });
         throwIfSyncCancelled();
+        const observedAt = Date.now();
+        const scope = posting!;
+        metrics.postingScan = { count: scope.context.observed.length, complete: scope.context.scanComplete, untracked: scope.context.untracked,
+          newIds: scope.prev ? scope.context.observed.filter(row => !scope.context.known.has(row.key)).length : 0 };
         total = jobs.length;
         if (!await saveProgress("saving")) return false;
         for (let offset = 0; offset < jobs.length; offset += 12) {
@@ -184,7 +197,8 @@ async function runSyncWithSettings(options: SyncOptions, crawl: typeof crawlForS
           const valid = rows.filter(job => job.title && job.canonicalUrl);
           const results = await write(async () => {
             const started = Date.now();
-            try { return await upsertJobs(db, source, valid, now, cutoff, classifier, config.model); }
+            try { return await upsertJobs(db, source, valid, now, cutoff, classifier, config.model,
+              { known: scope.context.known, positions: scope.context.positions, prev: scope.prev, observedAt }); }
             finally { metrics.dbMs += Date.now() - started; }
           });
           throwIfSyncCancelled();
@@ -202,11 +216,13 @@ async function runSyncWithSettings(options: SyncOptions, crawl: typeof crawlForS
         }
         throwIfSyncCancelled();
         const warning = jobs.warnings?.join("\n") || null;
-        const incomplete = jobs.warnings?.filter(message => !/发布日期未知|未提供发布日期，本轮仅取/.test(message)).join("\n") || null;
+        const incomplete = jobs.warnings?.filter(message => !/发布日期未知|未提供发布日期，本轮仅取|无法追踪新增/.test(message)).join("\n") || null;
         if (incomplete) sourceErrors.set(source.id, `${source.name}: ${incomplete}`);
         else sourceErrors.delete(source.id);
         await db.prepare(`UPDATE sources SET last_success_at=?1,last_error=?3,updated_at=?1 WHERE id=?2
           AND EXISTS (SELECT 1 FROM scrape_runs WHERE id=?4 AND status='running')`).bind(now, source.id, incomplete, runId).run();
+        await write(() => savePostingSnapshot(db, source.id, runId, new Date(observedAt).toISOString(), scope.context,
+          incomplete || scope.context.untracked ? "partial" : "success"));
         await saveProgress(incomplete ? "partial" : "success", warning);
         throwIfSyncCancelled();
         succeeded++;
@@ -218,6 +234,7 @@ async function runSyncWithSettings(options: SyncOptions, crawl: typeof crawlForS
           workdayCooldown = error.cooldown;
           metrics.workdayCooldown = error.cooldown;
           await saveWorkdayCooldown(db, error.cooldown);
+          await write(() => savePostingSnapshot(db, source.id, runId, new Date().toISOString(), undefined, "failed"));
           await saveProgress("rate_limited", error.message);
           return false;
         }
@@ -244,6 +261,7 @@ async function runSyncWithSettings(options: SyncOptions, crawl: typeof crawlForS
         if (retryAvailable) message += "，已安排在本轮队尾补跑一次";
         sourceErrors.set(source.id, `${source.name}: ${message}`);
         throwIfSyncCancelled();
+        if (crawlStarted) await write(() => savePostingSnapshot(db, source.id, runId, new Date().toISOString(), undefined, "failed"));
         await db.prepare(`UPDATE sources SET last_error=?1,updated_at=?2 WHERE id=?3
           AND EXISTS (SELECT 1 FROM scrape_runs WHERE id=?4 AND status='running')`).bind(message.slice(0, 500), now, source.id, runId).run();
         await saveProgress("failed", message.slice(0, 1000));
@@ -395,6 +413,7 @@ async function runSyncWithSettings(options: SyncOptions, crawl: typeof crawlForS
       WHERE id=?9 AND status IN ('running','cancelling') RETURNING status`)
       .bind(status, queueEnd, succeeded, seen, added, updated, errors.join("\n").slice(0, 4000) || null, purged, runId,
         queueCount, classifier.metrics.ruleRejected, classifier.metrics.cacheHits, classifier.metrics.requests),
+    failedSourceSnapshots(db, runId, queueEnd),
     db.prepare(`UPDATE scrape_source_progress SET
       stage=CASE WHEN (SELECT status FROM scrape_runs WHERE id=?1)='cancelled' THEN 'cancelled' ELSE ?2 END,
       jobs_queued=?3,finished_at=?4,updated_at=?4,error=?5,started_at=COALESCE(started_at,?4),

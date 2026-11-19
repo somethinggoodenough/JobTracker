@@ -3,6 +3,12 @@ import { AI_POLICY, careerLevels, jobCategories } from "./classification-types";
 import companyCountries from "../data/company-countries.json";
 
 export const JOBS_PAGE_SIZE = 50;
+export const DEFAULT_FRESHNESS = "published,new,uncertain";
+const freshnessLevels = new Set(["published", "new", "uncertain", "baseline"]);
+export function todayJobCondition(start: string, end: string) {
+  return `((j.publication_verified=1 AND j.posted_at>=${start} AND j.posted_at<${end}) OR
+    (j.freshness='new' AND j.first_seen_at>=${start} AND j.first_seen_at<${end}))`;
+}
 const companyNames = {
   CN: JSON.stringify(companyCountries.CN.map(name => name.toLowerCase())),
   US: JSON.stringify(companyCountries.US.map(name => name.toLowerCase())),
@@ -15,9 +21,17 @@ export function jobQuery(url: URL, now = new Date()) {
   const conditions = ["j.posted_at > ?1", `j.ai_policy='${AI_POLICY}' AND json_extract(j.ai_analysis,'$.accepted')=1`];
   const bindings: (string | number)[] = [new Date(now.getTime() - 7 * 86400000).toISOString()];
   const today = dayWindow(now);
+  const freshness = [...new Set((url.searchParams.get("freshness") ?? DEFAULT_FRESHNESS).split(",").map(key => key.trim()))];
+  if (freshness.length < 1 || freshness.some(key => !freshnessLevels.has(key))) conditions.push("0=1");
+  else if (freshness.length < freshnessLevels.size) {
+    const start = bindings.length;
+    bindings.push(...freshness);
+    conditions.push(`CASE WHEN j.publication_verified=1 THEN 'published' ELSE j.freshness END
+      IN (${freshness.map((_, i) => `?${start+i+1}`).join(",")})`);
+  }
   if (url.searchParams.get("period") === "today") {
     bindings.push(today.start, today.end);
-    conditions.push(`j.publication_verified=1 AND j.posted_at >= ?${bindings.length - 1} AND j.posted_at < ?${bindings.length}`);
+    conditions.push(todayJobCondition(`?${bindings.length - 1}`, `?${bindings.length}`));
   }
   for (const [parameter, columns] of [["q", ["title", "company", "description"]], ["location", ["location"]], ["type", ["workplace_type", "employment_type"]]] as const) {
     let value = (url.searchParams.get(parameter) ?? "").trim().slice(0, 200);
@@ -51,7 +65,7 @@ export function jobQuery(url: URL, now = new Date()) {
   } else if (companyCountry) {
     conditions.push("0=1");
   }
-  return { page, pageSize: JOBS_PAGE_SIZE, where: conditions.join(" AND "), bindings, today };
+  return { page, pageSize: JOBS_PAGE_SIZE, where: conditions.join(" AND "), bindings, today, includesBaseline: freshness.includes("baseline") };
 }
 export function pagination(total: number, requestedPage: number) {
   const totalPages = Math.max(1, Math.ceil(total / JOBS_PAGE_SIZE)), page = Math.min(requestedPage, totalPages);

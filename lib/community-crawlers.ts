@@ -1,7 +1,8 @@
 import type { CrawlBatch, JobRecord, SourceRecord } from "./job-types";
 import { clean, fetchSource, stripHtml } from "./crawler-http";
 import { mapDetails } from "./detail-cache";
-import { UNKNOWN_DATE_LIMIT, isCrawlCandidate } from "./crawl-policy";
+import { isCrawlCandidate, selectPostingRows } from "./crawl-policy";
+import { completePostingScan } from "./posting-ledger";
 import { throwIfSyncCancelled } from "./sync-control";
 
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
@@ -10,6 +11,8 @@ export const communitySources = [
   { name: "Simplify / Coder Quad New Grad（GitHub）", url: "https://github.com/SimplifyJobs/New-Grad-Positions" },
 ];
 type Listing = { id: string; company: string; title: string; url: string; location: string; added: number; simplifyId?: string };
+const listedOn = (listing?: Listing) => listing?.added && Number.isFinite(new Date(listing.added * 1000).valueOf())
+  ? new Date(listing.added * 1000).toISOString() : null;
 
 // Accept repository roots, GitHub blob URLs or raw public files; no authenticated API is needed.
 export function githubListingsUrl(value: string): string {
@@ -87,7 +90,7 @@ export function parseSimplifyDetail(html: string, id: string, listing?: Listing)
     description,
     // start_date, date_display and even datePosted JSON-LD may reflect Simplify updates.
     // None of them establish the employer's original publication date.
-    postedAt: null };
+    postedAt: listedOn(listing), ...(listedOn(listing) ? { dateKind: "listed" } : {}) };
 }
 
 async function atsDetail(listing: Listing): Promise<JobRecord | null> {
@@ -109,22 +112,25 @@ async function atsDetail(listing: Listing): Promise<JobRecord | null> {
     postedAt = clean(detail.published || detail.published_at) || null;
   } else throw new Error("原始申请网站尚无单岗位详情适配器，且没有可用的 Simplify 详情");
   if (!description) throw new Error("原始网站未提供完整 JD");
-  return { externalId: listing.id, company: listing.company, title: clean(detail.title || detail.text) || listing.title, canonicalUrl: listing.url, applyUrl: listing.url, location, description, postedAt };
+  return { externalId: listing.id, company: listing.company, title: clean(detail.title || detail.text) || listing.title, canonicalUrl: listing.url,
+    applyUrl: listing.url, location, description, postedAt: postedAt || listedOn(listing), dateKind: postedAt ? "published" : "listed" };
 }
 
 async function selectedListings(source: SourceRecord): Promise<Listing[]> {
   const response = await fetchSource(githubListingsUrl(source.url));
   let data: unknown; try { data = await response.json(); } catch { throw new Error("GitHub 职位文件未返回有效 JSON"); }
   // Release the full historical feed before waiting for detail requests.
-  return parseCommunityListings(data).slice(0, UNKNOWN_DATE_LIMIT);
+  const selected = selectPostingRows(parseCommunityListings(data), listedOn, listing => listing.id, () => "listed");
+  completePostingScan();
+  return selected;
 }
 
 export async function githubJobs(source: SourceRecord): Promise<CrawlBatch> {
   const selected = await selectedListings(source);
-  const warnings = ["社区列表日期仅用于排序，不作为公司发布日期；按发布日期未知规则取收录时间最新的前 50 条，再获取真实 JD。"];
+  const warnings: string[] = [];
   const failures: string[] = []; let resolved = 0, closed = 0;
   const results = await mapDetails<Listing, JobRecord | null>(selected,
-    listing => [listing.id, null, listing.url, listing.title, listing.location, listing.company, listing.simplifyId], async listing => {
+    listing => [listing.id, null, listing.url, listing.title, listing.location, listing.company, listing.simplifyId, listing.added], async listing => {
     try {
       let job: JobRecord | null;
       if (listing.simplifyId) {
@@ -139,9 +145,9 @@ export async function githubJobs(source: SourceRecord): Promise<CrawlBatch> {
     } catch (error) { throwIfSyncCancelled(); failures.push(`${listing.company} / ${listing.title}：${error instanceof Error ? error.message : "详情读取失败"}`); return null; }
   });
   resolved = selected.length - failures.length;
-  closed = results.filter(job => !job || !isCrawlCandidate(job.postedAt)).length - failures.length;
+  closed = results.filter(job => !job || !isCrawlCandidate(job.postedAt, job.dateKind)).length - failures.length;
   if (selected.length && !resolved) throw new Error(`GitHub 列表可读，但 ${selected.length} 条详情均未完成：${failures.slice(0, 2).join("；")}`);
   if (failures.length) warnings.push(`详情部分完成：${selected.length} 条中 ${failures.length} 条失败或缺少完整 JD，已跳过。${failures.slice(0, 3).join("；")}`);
   if (closed) warnings.push(`${closed} 条已关闭或原网站日期不在纽约当天，已跳过。`);
-  return Object.assign(results.filter((job): job is JobRecord => !!job && isCrawlCandidate(job.postedAt)), { warnings });
+  return Object.assign(results.filter((job): job is JobRecord => !!job && isCrawlCandidate(job.postedAt, job.dateKind)), { warnings });
 }
