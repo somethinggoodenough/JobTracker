@@ -1,6 +1,14 @@
 import { dayWindow } from "./crawl-window";
 import { AI_POLICY, careerLevels, jobCategories } from "./classification-types";
+import companyCountries from "../data/company-countries.json";
+
 export const JOBS_PAGE_SIZE = 50;
+const companyNames = {
+  CN: JSON.stringify(companyCountries.CN.map(name => name.toLowerCase())),
+  US: JSON.stringify(companyCountries.US.map(name => name.toLowerCase())),
+};
+const classifiedNames = JSON.stringify([...new Set([...companyCountries.CN, ...companyCountries.US].map(name => name.toLowerCase()))]);
+
 export function jobQuery(url: URL, now = new Date()) {
   const raw = url.searchParams.get("page") ?? "1";
   const page = /^\d+$/.test(raw) && Number.isSafeInteger(Number(raw)) ? Math.max(1, Number(raw)) : 1;
@@ -29,6 +37,19 @@ export function jobQuery(url: URL, now = new Date()) {
   if (level) {
     bindings.push(level);
     conditions.push(Object.hasOwn(careerLevels, level) ? `json_extract(j.ai_analysis,'$.careerLevel')=?${bindings.length}` : `(?${bindings.length} IS NULL AND 0=1)`);
+  }
+  const companyCountry = url.searchParams.get("companyCountry")?.trim().toUpperCase();
+  if (companyCountry === "CN" || companyCountry === "US") {
+    const selected = `?${bindings.push(companyNames[companyCountry])}`;
+    const known = `?${bindings.push(classifiedNames)}`;
+    // An identified employer takes precedence over the board's own company name.
+    conditions.push(`(lower(trim(j.company)) IN (SELECT value FROM json_each(${selected})) OR (
+      lower(trim(j.company)) NOT IN (SELECT value FROM json_each(${known})) AND j.source_id IN (
+        SELECT id FROM sources WHERE lower(trim(name)) IN (SELECT value FROM json_each(${selected}))
+      )
+    ))`);
+  } else if (companyCountry) {
+    conditions.push("0=1");
   }
   return { page, pageSize: JOBS_PAGE_SIZE, where: conditions.join(" AND "), bindings, today };
 }

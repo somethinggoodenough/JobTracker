@@ -46,6 +46,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0009_safe_darkhawk.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0010_fearless_inertia.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0011_puzzling_living_lightning.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0012_workday_cooldown.sql
 ```
 
 启动服务器并保持这个终端运行：
@@ -96,6 +97,8 @@ npm run scheduler -- --port 4173
 
 左侧目录包含全部职位（7 天）、申请职位状态、简历管理、招聘来源和同步记录，窄屏使用顶部目录。职位列表每页 50 条，支持翻页、页码跳转和跨页搜索。旧 `/today` 地址跳转到 `/applications`。
 
+首页可按雇主所属国家筛选中国公司或美国公司，并与工作地点及关键词叠加。雇主名称、别名和公司来源名称的归类在 `data/company-countries.json` 中维护。未归类的雇主可在「全部公司」中查找。
+
 ## 简历管理
 
 打开 `/resumes` 或左侧“简历管理”，为每个版本填写名称、目标岗位（为哪个岗位准备）、简短说明、创建时间和匹配的技术栈。技术栈用逗号分隔，自动去重；可选保存纯文本简历正文。支持查看、编辑、按元信息搜索、每页 12 份翻页，以及确认后删除。创建时间按纽约时区填写和显示，以 UTC 存储。
@@ -126,12 +129,21 @@ PDF 通过本地模拟 R2（绑定 `BUCKET`）保存到 `.wrangler/state/v3/r2/`
 
 | 参数 | 默认值 | 可选范围 |
 | --- | ---: | --- |
-| `JOB_RADAR_SOURCE_CONCURRENCY` | 6 | 1–12 个来源 |
+| `JOB_RADAR_SOURCE_CONCURRENCY` | 6 | 1–12 个来源，启用本地抓取进程时最多 6 个 |
 | `JOB_RADAR_HTTP_CONCURRENCY` | 12 | 1–24 个并发抓取请求 |
 | `JOB_RADAR_AI_CONCURRENCY` | 3 | 1–4 个并发审核 |
 | `JOB_RADAR_SOURCE_TIMEOUT_SECONDS` | 180 | 1–600 秒 |
+| `JOB_RADAR_RUN_TIMEOUT_SECONDS` | 2700 | 1–3600 秒 |
 
-同步进度的来源明细显示列表、详情、缓存命中和本地处理耗时。并发请求的累计耗时可能大于来源实际耗时。
+同步进度显示列表、详情、缓存命中、本地处理耗时、最后请求路径和最大响应体积。抓取超过 120 秒标记为「响应慢」。本地抓取进程每 5 秒接受一次健康检查，连续 3 次失败自动重启。本轮用于诊断的堆内存峰值来自定时采样。
+
+Workday 限速需要 `0012_workday_cooldown.sql`。Workday 整组使用单个执行槽，请求至少间隔 750 毫秒。任一 Workday 请求遇到 429，当轮跳过剩余 Workday 来源，其他来源继续同步。有效的 `Retry-After` 保存到本地数据库，冷却到期后在下一轮同步重试。缺少有效等待时间时，下轮同步可以直接尝试。进度页会显示上游返回的 `Retry-After` 和最早重试时间。
+
+本地抓取进程接单后立即发送 HTTP 响应头，抓取完成后再返回职位数据。进程暂时失联时，受影响的来源会在整轮剩余时间充足的情况下转到队尾补跑一次。
+
+发起同步的客户端如果断开连接，服务会结束当轮并释放尚未完成的候选认领，已保存的结果可继续查看。如果同步进程直接退出，连续 45 秒没有心跳后，下一次读取同步进度或发起同步会收尾并释放认领。每小时同步由独立调度器发起。
+
+运行 `node scripts/repro/sync-deadlines.mjs` 可在独立的本地 Wrangler 测试环境验证超时、迟到响应、抓取进程重启和断线恢复。测试使用模拟来源和临时数据库。
 
 申请记录保存在同一个本地数据库的 `applications` 表，状态时间线保存在 `application_events` 表。申请时间和状态时间按本机时区填写、以 UTC 存储。状态变化追加一条历史；仅修正当前状态时间则更新最后一条历史。更早的历史记录继续保留，多窗口同时修改会提示冲突。
 

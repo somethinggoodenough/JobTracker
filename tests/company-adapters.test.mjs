@@ -47,7 +47,7 @@ test('Cancelled contexts never start new HTTP requests',async t=>{
 
 function syncRoute(runSync){
  const code=ts.transpileModule(fs.readFileSync('app/api/sync/route.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
- const exports={};new Function('require','exports',code)(()=>({runSync}),exports);return exports.POST;
+ const exports={};new Function('require','exports',code)(id=>id==='cloudflare:workers'?{waitUntil:()=>{}}:{runSync},exports);return exports.POST;
 }
 
 test('Sync sends an immediate uncompressed heartbeat and preserves JSON compatibility',async()=>{
@@ -65,6 +65,17 @@ test('Sync sends an immediate uncompressed heartbeat and preserves JSON compatib
 test('Sync stream exposes lock/errors as a JSON error, without hanging the connection',async()=>{
  const response=await syncRoute(async()=>{throw new Error('Already running');})();
  assert.equal((await response.json()).error,'Already running');
+});
+
+test('Closing the sync response aborts the run so it can finalize', async () => {
+ let owner;
+ const response=await syncRoute(({signal})=>{
+  owner=signal;
+  return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));
+ })();
+ await response.body.cancel();
+ assert.equal(owner.aborted,true);
+ assert.match(owner.reason.message,/同步连接已断开/);
 });
 
 test('Google reads embedded JSON without executing JavaScript, preserves full JD and posting timestamp',()=>{

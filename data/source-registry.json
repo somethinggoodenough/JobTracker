@@ -133,6 +133,8 @@
   {"name":"小米","url":"https://hr.xiaomi.com/website/opportunities.html","kind":"company"},
   {"name":"网易","url":"https://hr.163.com/job-list.html","kind":"company"},
   {"name":"小红书","url":"https://job.xiaohongshu.com/social/position","kind":"company"},
+  {"name":"米哈游（校招）","url":"https://jobs.mihoyo.com/#/campus/position","kind":"company"},
+  {"name":"米哈游（社招）","url":"https://jobs.mihoyo.com/#/position","kind":"company"},
   {"name":"科大讯飞","url":"https://iflytek.zhiye.com/jobs","kind":"company"},
   {"name":"360","url":"https://360campus.zhiye.com/jobs","kind":"company"},
   {"name":"寒武纪","url":"https://app.mokahr.com/campus-recruitment/cambricon/44201","kind":"company"},

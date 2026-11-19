@@ -18,4 +18,5 @@ export function executeCrawl(db: D1Database, source: SourceRecord, performance: 
   return crawlPerformance.run(performance, () => detailCache.run({ db, namespace: sourceNamespace(source) }, () => crawlSource(source)));
 }
 
-export type LocalCrawlResult = { jobs: Awaited<ReturnType<typeof crawlSource>>; warnings?: string[]; metrics: CrawlMetrics; error?: string };
+export type LocalCrawlResult = { jobs: Awaited<ReturnType<typeof crawlSource>>; warnings?: string[]; metrics?: CrawlMetrics;
+  error?: string; sourceDeadline?: boolean; heapPeakMb?: number };

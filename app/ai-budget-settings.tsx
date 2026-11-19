@@ -30,16 +30,16 @@ export default function AiBudgetSettings({ budget, onSaveStart, onSaved }: { bud
     } catch (failure) { setError(failure instanceof Error ? failure.message : "保存失败，请重试"); }
     finally { setSaving(false); }
   }
-  return <form onSubmit={save} className="mt-4 rounded-xl border border-[#d2ddca] bg-white/80 p-4" aria-label={t("每日 AI 筛选额度设置")}>
-    <label htmlFor="daily-ai-limit" className="block text-sm font-medium text-[#305336]">{t("每日 AI 筛选额度")}</label>
+  return <form onSubmit={save} className="mt-4 rounded-xl border border-radar-border bg-white/80 p-4" aria-label={t("每日 AI 筛选额度设置")}>
+    <label htmlFor="daily-ai-limit" className="block text-sm font-medium text-radar-strong">{t("每日 AI 筛选额度")}</label>
     <div className="mt-2 flex flex-wrap items-center gap-3">
       <input id="daily-ai-limit" type="number" min="0" max="1000000" step="1" required={!unlimited} disabled={unlimited || saving} value={limit} onChange={event=>{changed();setLimit(event.target.value);}} className="source-input w-36 disabled:opacity-50" />
-      <span className="text-xs text-[#64725d]">{t("次请求 / 纽约日历日")}</span>
-      <label className="flex cursor-pointer items-center gap-2 text-sm text-[#52694b]"><input type="checkbox" checked={unlimited} disabled={saving} onChange={event=>{changed();setUnlimited(event.target.checked);}} className="accent-[#305336]" />{t("不设上限")}</label>
+      <span className="text-xs text-radar-muted">{t("次请求 / 纽约日历日")}</span>
+      <label className="flex cursor-pointer items-center gap-2 text-sm text-radar-muted"><input type="checkbox" checked={unlimited} disabled={saving} onChange={event=>{changed();setUnlimited(event.target.checked);}} className="accent-radar-strong" />{t("不设上限")}</label>
       <button type="submit" disabled={saving} className="sync-button">{saving ? t("保存中…") : t("保存额度")}</button>
     </div>
-    <p className="mt-2 text-xs leading-6 text-[#64725d]">{t("可自行填写额度，设为 0 暂停 AI。一个岗位通常需要 1 次请求，异常重试和格式纠正也计数。粗筛和缓存复用不占额度；保存设置不会清零今日已用次数。")}</p>
-    {notice && <p role="status" className="mt-2 text-xs text-[#305336]">{t(notice)}</p>}
+    <p className="mt-2 text-xs leading-6 text-radar-muted">{t("可自行填写额度，设为 0 暂停 AI。一个岗位通常需要 1 次请求，异常重试和格式纠正也计数。粗筛和缓存复用不占额度；保存设置不会清零今日已用次数。")}</p>
+    {notice && <p role="status" className="mt-2 text-xs text-radar-strong">{t(notice)}</p>}
     {error && <p role="alert" className="mt-2 text-xs text-red-700">{t(error)}</p>}
   </form>;
 }

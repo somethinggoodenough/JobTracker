@@ -11,7 +11,7 @@ async function sync() {
   pending = true;
   const startedAt = new Date().toISOString();
   try {
-    const response = await fetch(syncUrl, { method: "POST", signal: AbortSignal.timeout(55 * 60_000) });
+    const response = await fetch(syncUrl, { method: "POST", signal: AbortSignal.timeout(65 * 60_000) });
     const payload = await response.json();
     if (!response.ok || payload.error) throw new Error(payload.error || `HTTP ${response.status}`);
     console.log(`[${startedAt}] hourly sync complete`, JSON.stringify(payload));

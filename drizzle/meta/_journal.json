@@ -85,6 +85,13 @@
       "when": 1795036379835,
       "tag": "0011_puzzling_living_lightning",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1795061887639,
+      "tag": "0012_workday_cooldown",
+      "breakpoints": true
     }
   ]
 }

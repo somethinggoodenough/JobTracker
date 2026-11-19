@@ -47,6 +47,8 @@
   {"name":"阿里云","adapter":"alibaba","url":"https://careers.aliyun.com/off-campus/position-list"},
   {"name":"网易","adapter":"netease","url":"https://hr.163.com/job-list.html"},
   {"name":"小红书","adapter":"xiaohongshu","url":"https://job.xiaohongshu.com/social/position"},
+  {"name":"米哈游（校招）","adapter":"mihoyo","url":"https://jobs.mihoyo.com/#/campus/position"},
+  {"name":"米哈游（社招）","adapter":"mihoyo","url":"https://jobs.mihoyo.com/#/position"},
   {"name":"京东","adapter":"jdcom","url":"https://zhaopin.jd.com/web/job/job_info_list/3"},
   {"name":"TikTok","adapter":"tiktok","url":"https://lifeattiktok.com/search"},
   {"name":"Meta","adapter":"meta","url":"https://www.metacareers.com/jobsearch/"},

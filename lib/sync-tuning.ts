@@ -10,4 +10,5 @@ export const syncTuning = () => ({
   requests: readInt("JOB_RADAR_HTTP_CONCURRENCY", 12, 24),
   ai: readInt("JOB_RADAR_AI_CONCURRENCY", 3, 4),
   sourceTimeoutMs: readInt("JOB_RADAR_SOURCE_TIMEOUT_SECONDS", 180, 600) * 1000,
+  runTimeoutMs: readInt("JOB_RADAR_RUN_TIMEOUT_SECONDS", 2700, 3600) * 1000,
 });

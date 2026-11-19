@@ -1,8 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
 import {loadLocalTypeScript} from '../scripts/load-local-typescript.mjs';
 const {dayWindow,withCrawlWindow,isInCrawlWindow,currentCrawlWindow,publicationTime}=loadLocalTypeScript('lib/crawl-window.ts');
 const {jobQuery,pagination}=loadLocalTypeScript('lib/job-query.ts');
+const {AI_POLICY}=loadLocalTypeScript('lib/classification-types.ts');
 const {crawlSource}=loadLocalTypeScript('lib/crawler.ts');
 const {eightfold,tencent}=loadLocalTypeScript('lib/company-crawlers.ts');
 const window=dayWindow(new Date('2026-11-17T12:00:00Z'));
@@ -32,6 +34,35 @@ test('Search and today filters are parameterized and match count/list consistent
  const q=jobQuery(new URL('https://example.test?page=4&period=today&q=100%25_&type=Full-time'),new Date('2026-11-17T12:00Z'));
  assert.equal(q.page,4);assert(q.bindings.includes('100%_'));assert(q.bindings.includes('fulltime'));
  assert(q.where.includes('instr(lower(j.description)'));assert(!q.where.includes('100'));assert(q.bindings.includes(window.start));
+});
+test('Company country filters by employer across locations, aggregators and result pages', t => {
+ const db = new DatabaseSync(':memory:');
+ t.after(() => db.close());
+ db.exec(`CREATE TABLE sources (id INTEGER PRIMARY KEY, name TEXT);
+   CREATE TABLE jobs (id INTEGER PRIMARY KEY, source_id INTEGER, company TEXT, title TEXT, location TEXT,
+     description TEXT, posted_at TEXT, ai_policy TEXT, ai_analysis TEXT);
+   INSERT INTO sources VALUES (1,'Aggregate Board'), (2,'Google');`);
+ const insert = db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?)');
+ function job(id, source, company, location) {
+  insert.run(id, source, company, 'Backend Engineer', location, 'Build APIs', '2026-11-17T11:00:00Z', AI_POLICY, '{"accepted":true}');
+ }
+ for (let id = 1; id <= 51; id++) job(id, 1, 'Amazon Web Services', 'Shanghai, China');
+ job(52, 2, ' Tencent ', 'Palo Alto, United States');
+ job(53, 1, 'Lenovo', 'New York, United States');
+ job(54, 1, 'Samsung', 'San Jose, United States');
+ job(55, 2, 'Google Research', 'Beijing, China');
+ function search(parameters) {
+  const query = jobQuery(new URL('https://example.test?' + parameters), new Date('2026-11-17T12:00Z'));
+  const { total } = db.prepare(`SELECT COUNT(*) AS total FROM jobs j WHERE ${query.where}`).get(...query.bindings);
+  const pages = pagination(total, query.page);
+  const rows = db.prepare(`SELECT id FROM jobs j WHERE ${query.where} ORDER BY id LIMIT ${pages.pageSize} OFFSET ${pages.offset}`).all(...query.bindings);
+  return { total, ids: rows.map(row => row.id) };
+ }
+ assert.deepEqual(search('companyCountry=CN&q=Backend'), { total: 2, ids: [52, 53] });
+ assert.deepEqual(search('companyCountry=US&page=2'), { total: 53, ids: [51, 53, 55] });
+ assert.deepEqual(search('companyCountry=US&location=Shanghai&page=2'), { total: 51, ids: [51] });
+ assert.equal(search('').total, 55);
+ assert.equal(search("companyCountry=US%27%20OR%201%3D1").total, 0);
 });
 test('Greenhouse includes today and undated jobs, but never downloads yesterday JD',async t=>{
  const calls=[];t.mock.method(globalThis,'fetch',async url=>{

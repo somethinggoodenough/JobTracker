@@ -1,0 +1,14 @@
+name = "job-radar-sync-deadlines"
+main = "sync-worker.ts"
+compatibility_date = "2026-05-15"
+compatibility_flags = ["nodejs_compat", "enable_request_signal"]
+
+[alias]
+"@/data/company-adapters.json" = "../../data/company-adapters.json"
+"@/data/source-registry.json" = "../../data/source-registry.json"
+"@/lib/sync" = "../../lib/sync.ts"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sync-deadlines-fixture"
+database_id = "11111111-bbbb-4aaa-8888-111111111111"

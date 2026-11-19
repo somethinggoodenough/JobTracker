@@ -15,7 +15,8 @@ export function canonicalUrl(value: string) {
   try {
     const url = new URL(value);
     // Moka and other SPA boards put the posting identity in the route fragment.
-    if (!/^#\/(?:job\/|campus\/)/.test(url.hash)) url.hash = "";
+    const mihoyoPosting = url.hostname === "jobs.mihoyo.com" && /^#\/position\/\d+$/.test(url.hash);
+    if (!mihoyoPosting && !/^#\/(?:job\/|campus\/)/.test(url.hash)) url.hash = "";
     [...url.searchParams.keys()].forEach((key) => {
       if (/^(utm_|source$|ref$|gh_src$)/i.test(key)) url.searchParams.delete(key);
     });
@@ -29,6 +30,7 @@ async function sha256(value: string) {
 }
 
 export async function seedDiscoveries(db: D1Database) {
+  throwIfSyncCancelled();
   const rows = await db.prepare(`SELECT canonical_url,dedupe_key,first_seen_at FROM jobs j WHERE NOT EXISTS
     (SELECT 1 FROM job_discoveries d WHERE d.identity='fingerprint:'||j.dedupe_key)`).all<{ canonical_url: string; dedupe_key: string; first_seen_at: string }>();
   for (let offset=0;offset<rows.results.length;offset+=40) {
@@ -36,6 +38,7 @@ export async function seedDiscoveries(db: D1Database) {
       { identity: `url:${await sha256(canonicalUrl(row.canonical_url))}`, firstSeen: row.first_seen_at },
       { identity: `fingerprint:${row.dedupe_key}`, firstSeen: row.first_seen_at },
     ]));
+    throwIfSyncCancelled();
     await db.batch(entries.flat().map(entry => db.prepare("INSERT OR IGNORE INTO job_discoveries(identity,first_seen_at) VALUES(?1,?2)").bind(entry.identity,entry.firstSeen)));
   }
 }

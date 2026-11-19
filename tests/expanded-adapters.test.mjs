@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { loadLocalTypeScript } from '../scripts/load-local-typescript.mjs';
 const { shlab, huawei, kuaishouCampus, beisenPb, pinpoint, eightfoldLegacy, phenom, avature, staticArray, htmlDiv } = loadLocalTypeScript('lib/expanded-crawlers.ts');
 const { canonicalUrl } = loadLocalTypeScript('lib/job-storage.ts');
+const { crawlSource, normalizeSource } = loadLocalTypeScript('lib/crawler.ts');
 const { oracle } = loadLocalTypeScript('lib/company-crawlers.ts');
 const { withCrawlWindow, dayWindow } = loadLocalTypeScript('lib/crawl-window.ts');
 const today = fn => withCrawlWindow(dayWindow(new Date('2026-11-18T12:00:00Z')), fn);
@@ -16,6 +17,62 @@ test('SPA posting routes remain distinct after URL deduplication', () => {
  assert.equal(canonicalUrl(base + '?utm_source=board#/job/1'), base + '#/job/1');
  assert.equal(canonicalUrl(base + '#contact'), base);
  assert.match(canonicalUrl('https://campus.kuaishou.cn/e/#/campus/job-info/123'), /job-info\/123$/);
+});
+
+test('miHoYo source normalization keeps campus and social boards separate', () => {
+ const campus = 'https://jobs.mihoyo.com/#/campus/position';
+ const social = 'https://jobs.mihoyo.com/#/position';
+ for (const input of [campus, 'https://join.mihoyo.com/', 'https://campus.mihoyo.com/?channelToken=referral']) {
+  assert.equal(normalizeSource(input).canonicalInput, campus);
+  assert.equal(normalizeSource(input).adapter, 'mihoyo');
+ }
+ assert.equal(normalizeSource('https://jobs.mihoyo.com/').canonicalInput, social);
+ assert.equal(canonicalUrl(social + '/42'), social + '/42');
+ assert.notEqual(canonicalUrl(social + '/42'), canonicalUrl(social + '/43'));
+ assert.equal(normalizeSource('https://jobs.mihoyo.com.example.org/#/position').adapter, 'auto');
+});
+
+test('miHoYo fetches fifty undated details per board, preserves official requirements and reports missing work', async t => {
+ const calls = [];
+ t.mock.method(globalThis, 'fetch', async (url, init) => {
+  const endpoint = new URL(url);
+  assert.equal(endpoint.hostname, 'ats.openout.mihoyo.com');
+  assert.equal(init.method, 'POST');
+  const body = JSON.parse(init.body);
+  assert.deepEqual(body.channelDetailIds, [1]);
+  calls.push([endpoint.pathname, body]);
+  if (endpoint.pathname.endsWith('/list')) {
+   assert.equal(body.pageNo, 1);
+   assert.equal(body.pageSize, 50);
+   return Response.json({ code: 0, data: { total: 51, list: Array.from({ length: 50 }, (_, i) => ({
+    id: String(i + 1), title: 'Backend Engineer', jobNature: '全职', projectName: '春招', objectName: '应届毕业生',
+   })) } });
+  }
+  if (body.id === '2' && body.hireType === 1) return Response.json({ code: 1, data: null });
+  return Response.json({ code: 0, data: {
+   id: body.id, title: 'Backend Engineer', description, jobRequire: '<p>Python and Kubernetes</p>',
+   addressDetailList: [{ addressDetail: '上海' }, { addressDetail: '上海' }, { addressDetail: '杭州' }],
+  } });
+ });
+
+ const campus = await crawlSource({ ...source, url: 'https://join.mihoyo.com/' });
+ const social = await crawlSource({ ...source, url: 'https://jobs.mihoyo.com/#/position' });
+ assert.equal(campus.length, 49);
+ assert.equal(social.length, 50);
+ assert.equal(calls.filter(([path]) => path.endsWith('/info')).length, 100);
+ assert.equal(social.at(-1).externalId, '50');
+ assert.equal(campus[0].location, '上海 · 杭州');
+ assert.equal(campus[0].company, '米哈游');
+ assert.equal(campus[0].applyUrl, 'https://jobs.mihoyo.com/#/campus/position/1');
+ assert.match(campus[0].description, /招聘渠道：校招.*任职要求\nPython and Kubernetes/s);
+ assert.doesNotMatch(social[0].description, /招聘渠道：校招/);
+ assert(campus.concat(social).every(job => job.postedAt === null));
+ assert.match(campus.warnings.join('\n'), /1 条职位详情读取失败/);
+});
+
+test('miHoYo returns an explicit error for incomplete board responses', async t => {
+ t.mock.method(globalThis, 'fetch', async () => Response.json({ code: 0, data: { total: 101, list: [] } }));
+ await assert.rejects(crawlSource({ ...source, url: 'https://jobs.mihoyo.com/#/position' }), /分页不完整/);
 });
 
 test('SHLAB shares fifty undated selections across seven-row cursor pages and ignores creation dates', async t => {

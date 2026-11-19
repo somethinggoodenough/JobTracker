@@ -8,7 +8,8 @@ export type ClaimedCandidate = { id: number; source_id: number; content_hash: st
 export function claimCandidate(db: D1Database, runId: number, now = new Date().toISOString()) {
   return db.prepare(`UPDATE job_candidates SET claim_run_id=?1 WHERE id=(
     SELECT id FROM job_candidates WHERE claim_run_id IS NULL AND expires_at>?2 AND next_retry_at<=?2
-    ORDER BY substr(expires_at,1,10),priority DESC,first_seen_at,id LIMIT 1) RETURNING
+    ORDER BY substr(expires_at,1,10),priority DESC,first_seen_at,id LIMIT 1)
+    AND EXISTS (SELECT 1 FROM scrape_runs WHERE id=?1 AND status='running') RETURNING
     id,source_id,content_hash,payload_json,first_seen_at`).bind(runId, now).first<ClaimedCandidate>();
 }
 

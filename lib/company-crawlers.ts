@@ -1,6 +1,7 @@
 import profiles from "@/data/company-adapters.json";
 import { additionalAdapters } from "./additional-crawlers";
 import { expandedAdapters } from "./expanded-crawlers";
+import { mihoyo } from "./mihoyo-crawler";
 import { throwIfSyncCancelled } from "./sync-control";
 import type { JobRecord, SourceAdapter, SourceRecord } from "./job-types";
 import { clean, fetchJson, fetchSource, mapPool, recent, stripHtml } from "./crawler-http";
@@ -278,5 +279,5 @@ export async function comeet(source: SourceRecord): Promise<JobRecord[]> {
 export const dedicatedAdapters: Partial<Record<SourceAdapter, (source: SourceRecord, account: string) => Promise<JobRecord[]>>> = {
   ...expandedAdapters,
   ...additionalAdapters,
-  amazon, google, jibe, tencent, eightfold, oracle, smartrecruiters, apple, paycor, comeet,
+  amazon, google, jibe, tencent, eightfold, oracle, smartrecruiters, apple, paycor, comeet, mihoyo,
 };

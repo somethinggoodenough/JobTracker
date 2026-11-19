@@ -6,6 +6,7 @@ import { hasPublicationDate, selectPostingRows } from "./crawl-policy";
 import { createPostingSelection } from "./crawl-policy";
 import { githubJobs, githubListingsUrl } from "./community-crawlers";
 import { mapDetails } from "./detail-cache";
+import { mihoyoBoard } from "./mihoyo-crawler";
 
 function companyFromUrl(url: string): string {
   try {
@@ -17,6 +18,8 @@ function companyFromUrl(url: string): string {
 
 export function normalizeSource(input: string, requested: SourceAdapter = "auto") {
   const parsed = new URL(input.trim());
+  const mihoyo = requested === "auto" || requested === "mihoyo" ? mihoyoBoard(parsed) : null;
+  if (mihoyo) return { adapter: "mihoyo" as const, fetchUrl: mihoyo, canonicalInput: mihoyo };
   parsed.hash = "";
   const host = parsed.hostname.toLowerCase();
   const parts = parsed.pathname.split("/").filter(Boolean);

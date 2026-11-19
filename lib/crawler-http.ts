@@ -1,6 +1,8 @@
-import { currentSyncSignal, syncDelay, throwIfSyncCancelled } from "./sync-control";
+import { currentSyncSignal, syncDelay, throwIfSyncCancelled, withSyncSignal } from "./sync-control";
+import { DeadlineError, withDeadline } from "./deadline";
 import { isInCrawlWindow } from "./crawl-window";
-import { crawlPerformance, detailRequest } from "./crawl-performance";
+import { crawlPerformance, detailRequest, type CrawlRequest } from "./crawl-performance";
+import { isWorkdayHost, workdayRateLimit, WorkdayRateLimitError } from "./workday-rate-limit";
 
 export const clean = (value: unknown) => value == null ? "" : String(value).trim();
 
@@ -15,7 +17,7 @@ export function stripHtml(value: unknown): string {
     .replace(/\n{3,}/g, "\n\n").trim().slice(0, 40_000);
 }
 
-async function bufferResponse(response: Response) {
+async function bufferResponse(response: Response, signal: AbortSignal, onBytes: (size: number) => void) {
   if (!response.body) return response;
   const reader = response.body.getReader();
   const chunks: Uint8Array<ArrayBuffer>[] = [];
@@ -23,13 +25,15 @@ async function bufferResponse(response: Response) {
   try {
     for (;;) {
       const { value, done } = await reader.read();
+      signal.throwIfAborted();
       if (done) break;
       bytes += value.byteLength;
+      onBytes(bytes);
       if (bytes > 32 * 1024 * 1024) throw new Error("招聘响应超过 32 MiB");
       chunks.push(new Uint8Array(value));
     }
   } catch (error) {
-    await reader.cancel().catch(() => {});
+    void reader.cancel().catch(() => {});
     throw error;
   } finally {
     reader.releaseLock();
@@ -44,30 +48,61 @@ export async function fetchSource(url: string, init: RequestInit = {}) {
   const performance = crawlPerformance.getStore();
   const metrics = performance?.metrics;
   const detail = detailRequest.getStore();
+  const parent = currentSyncSignal();
+  const requestParent = parent && init.signal ? AbortSignal.any([parent, init.signal]) : parent ?? init.signal ?? undefined;
   for (let attempt = 0; attempt < 3; attempt++) {
-    throwIfSyncCancelled();
+    requestParent?.throwIfAborted();
     let response: Response;
     const request = async () => {
-      if (parsed.pathname.startsWith("/api/pcsx/")) await syncDelay(500);
-      const timeout = AbortSignal.timeout(20_000);
-      const signal = AbortSignal.any([timeout, currentSyncSignal(), init.signal].filter((s): s is AbortSignal => !!s));
       const started = Date.now();
-      if (metrics) metrics[detail ? "detailRequests" : "listRequests"]++;
+      const trace: CrawlRequest = { address: parsed.host + parsed.pathname, startedAt: new Date(started).toISOString(), finishedAt: null };
+      if (metrics) {
+        metrics[detail ? "detailRequests" : "listRequests"]++;
+        metrics.lastRequest = trace;
+        metrics.activeRequests++;
+      }
       try {
-        const result = await fetch(url, { ...init, signal,
-          headers: { "user-agent": "Mozilla/5.0 (compatible; JobRadar/1.0)",
-            accept: "application/json,text/html;q=0.9", ...(init.headers ?? {}) } });
-        return performance && result.ok ? await bufferResponse(result) : result;
+        return await withDeadline("单次抓取请求", 20_000, requestParent, signal => withSyncSignal(signal, async () => {
+          if (parsed.pathname.startsWith("/api/pcsx/")) await syncDelay(500);
+          const result = await fetch(url, { ...init, signal,
+            headers: { "user-agent": "Mozilla/5.0 (compatible; JobRadar/1.0)",
+              accept: "application/json,text/html;q=0.9", ...(init.headers ?? {}) } });
+          if (signal.aborted) {
+            void result.body?.cancel().catch(() => {});
+            signal.throwIfAborted();
+          }
+          if (result.status === 429 && isWorkdayHost(parsed.hostname)) {
+            void result.body?.cancel().catch(() => {});
+            const cooldown = workdayRateLimit(parsed, result.headers.get("Retry-After"));
+            if (metrics) { metrics.throttled++; metrics.workdayCooldown = cooldown; }
+            throw new WorkdayRateLimitError(cooldown);
+          }
+          if (!result.ok) {
+            await result.body?.cancel();
+            return result;
+          }
+          return bufferResponse(result, signal, bytes => {
+            if (metrics) metrics.maxResponseBytes = Math.max(metrics.maxResponseBytes, bytes);
+          });
+        }));
       } catch (error) {
-        if (timeout.aborted && metrics) metrics.timeouts++;
+        if (error instanceof DeadlineError && error !== requestParent?.reason && metrics) {
+          metrics.timeouts++;
+          metrics.deadlineHit = true;
+        }
         throw error;
       } finally {
-        if (metrics) metrics[detail ? "detailMs" : "listMs"] += Date.now() - started;
+        if (metrics) {
+          metrics[detail ? "detailMs" : "listMs"] += Date.now() - started;
+          metrics.activeRequests--;
+          trace.finishedAt = new Date().toISOString();
+        }
       }
     };
-    try { response = performance ? await performance.limit(parsed, request) : await request(); }
+    try { response = performance ? await performance.limit(parsed, request, requestParent) : await request(); }
     catch (error) {
-      throwIfSyncCancelled();
+      requestParent?.throwIfAborted();
+      if (error instanceof WorkdayRateLimitError) throw error;
       throw new Error(`${error instanceof Error ? error.message : "网络请求失败"} · ${parsed.hostname}${parsed.pathname}`, { cause: error });
     }
     if (response.ok || init.redirect === "manual" && [301, 302, 303, 307, 308].includes(response.status)) return response;
@@ -76,11 +111,11 @@ export async function fetchSource(url: string, init: RequestInit = {}) {
       const retry = response.headers.get("Retry-After");
       const delay = retry ? (/^\d+$/.test(retry) ? Number(retry) * 1000 : Date.parse(retry) - Date.now()) : (attempt + 1) * 3000;
       if (Number.isFinite(delay) && delay >= 0 && delay <= 30000) {
-        await response.body?.cancel();
-        await syncDelay(delay); continue;
+        if (requestParent) await withSyncSignal(requestParent, () => syncDelay(delay));
+        else await syncDelay(delay);
+        continue;
       }
     }
-    await response.body?.cancel();
     throw new Error(`HTTP ${response.status} · ${parsed.hostname}${parsed.pathname}`);
   }
   throw new Error("请求重试耗尽");

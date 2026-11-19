@@ -1,6 +1,7 @@
 import type { JobRecord } from "./job-types";
 import { AI_POLICY, CLASSIFIER_VERSION, careerLevels, jobCategories, type JobAnalysis, type JobDecision } from "./classification-types";
 import { currentSyncSignal, syncDelay, throwIfSyncCancelled } from "./sync-control";
+import { withDeadline } from "./deadline";
 import { localShortlist, SHORTLIST_VERSION } from "./local-shortlist";
 import { reserveModelRequest } from "./ai-budget";
 import { confirmedUsSponsorship } from "./sponsorship";
@@ -61,6 +62,8 @@ export function createJobClassifier(db: D1Database, config: { apiKey: string; mo
   let active = 0, fatal = "";
   const queue: (() => void)[] = [];
   const metrics = { calls: 0, requests: 0, cacheHits: 0, ruleRejected: 0, requestMs: 0 };
+  type ModelData = { choices?: { finish_reason?: string; message?: { content?: string } }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number } };
   async function remote(job: JobRecord, key: string, feedback?: string): Promise<JobDecision> {
     if (active >= 4) await new Promise<void>(resolve => queue.push(resolve));
     else active++;
@@ -68,7 +71,8 @@ export function createJobClassifier(db: D1Database, config: { apiKey: string; mo
       throwIfSyncCancelled();
       if (fatal) throw new ClassificationUnavailable(fatal);
       if (!config.apiKey) throw new ClassificationUnavailable("未读取到 DeepSeek API Key，请检查 .env 后重启本地服务");
-      let response: Response | undefined;
+      let code = 0;
+      let data: ModelData | undefined;
       for (let attempt = 0; attempt < 2; attempt++) {
         throwIfSyncCancelled();
         // Reserve every outbound attempt, including retries and corrective requests.
@@ -77,30 +81,41 @@ export function createJobClassifier(db: D1Database, config: { apiKey: string; mo
         const requestStarted = Date.now();
         try {
           metrics.requests++;
-          response = await fetch("https://api.deepseek.com/chat/completions", {
+          const result = await withDeadline("DeepSeek 请求", 60_000, currentSyncSignal(), async signal => {
+            const response = await fetch("https://api.deepseek.com/chat/completions", {
             method: "POST", headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
-            signal: AbortSignal.any([AbortSignal.timeout(60_000), currentSyncSignal()].filter((s): s is AbortSignal => !!s)),
+            signal,
             body: JSON.stringify({ model: config.model, thinking: { type: "disabled" }, temperature: 0, max_tokens: feedback ? 2200 : 1600,
               response_format: { type: "json_object" }, messages: [{ role: "system", content: settings.aiPrompt + "\n\n" + AI_RESPONSE_CONTRACT },
                 { role: "user", content: JSON.stringify({ title: job.title, company: job.company, location: job.location,
                   employmentType: job.employmentType, workplaceType: job.workplaceType, department: job.department, jd: job.description }) },
                 ...(feedback ? [{ role: "user", content: `Your previous response failed validation: ${feedback}. Correct the JSON schema and exact verbatim evidence using ONLY the job data above. Use only the allowed category, level and country codes. If eligibility cannot be proved, return accepted:false with a reason. Keep quotes short and exact. Return JSON only.` }] : [])] }),
+            });
+            if (signal.aborted) {
+              void response.body?.cancel().catch(() => {});
+              signal.throwIfAborted();
+            }
+            if (!response.ok) {
+              await response.body?.cancel();
+              return { code: response.status };
+            }
+            return { code: response.status, data: await response.json() as ModelData };
           });
+          code = result.code;
+          data = result.data;
         } catch {
           throwIfSyncCancelled();
           throw new ClassificationUnavailable("DeepSeek 请求超时或网络异常，本条未入库，下次同步重试");
         } finally { metrics.requestMs += Date.now() - requestStarted; }
-        if ((response.status === 429 || response.status >= 500) && attempt === 0) { await response.body?.cancel(); await syncDelay(1500); continue; }
+        if ((code === 429 || code >= 500) && attempt === 0) { await syncDelay(1500); continue; }
         break;
       }
-      if (!response?.ok) {
-        await response?.body?.cancel();
-        const code = response?.status || 0;
+      if (!data) {
         if ([401,402,403,404].includes(code)) fatal = `DeepSeek HTTP ${code}：请检查密钥、余额或模型配置；未筛选职位不会入库`;
         throw new ClassificationUnavailable(fatal || `DeepSeek HTTP ${code}，本条未入库，下次同步重试`);
       }
+      throwIfSyncCancelled();
       metrics.calls++;
-      const data = await response.json() as { choices?: { finish_reason?: string; message?: { content?: string } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number } };
       const usage = data.usage || {};
       // Record only token counts/model. Never persist credentials, prompts or job payloads here.
       const count = (n: unknown) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0 ? n : 0;

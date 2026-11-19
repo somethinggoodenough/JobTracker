@@ -26,6 +26,7 @@ test('Parallel consumers claim each due candidate once, ordered by priority', as
   const {db,sqlite}=database();
   try {
     sqlite.prepare('INSERT INTO sources(name,url) VALUES(?,?)').run(source.name,source.url);
+    sqlite.prepare("INSERT INTO scrape_runs(id,status,started_at,sources_total) VALUES(7,'running','2026-11-19',1)").run();
     const add=sqlite.prepare(`INSERT INTO job_candidates(source_id,canonical_url,dedupe_key,content_hash,payload_json,
       priority,first_seen_at,last_seen_at,expires_at,next_retry_at) VALUES(1,?,?,'hash','{}',?,'2026-11-18','2026-11-18','2026-11-25',?)`);
     add.run('first','1',60,'2026-11-18');
@@ -33,7 +34,10 @@ test('Parallel consumers claim each due candidate once, ordered by priority', as
     add.run('delayed','3',100,'2026-11-20');
     const claimed=await Promise.all(Array.from({length:4},()=>claimCandidate(db,7,'2026-11-19')));
     assert.deepEqual(claimed.map(row=>row?.id??null),[2,1,null,null]);
-    assert.equal((await claimCandidate(db,7,'2026-11-20')).id,3);
+    sqlite.prepare("UPDATE scrape_runs SET status='partial' WHERE id=7").run();
+    assert.equal(await claimCandidate(db,7,'2026-11-20'),null);
+    sqlite.prepare("INSERT INTO scrape_runs(id,status,started_at,sources_total) VALUES(8,'running','2026-11-20',1)").run();
+    assert.equal((await claimCandidate(db,8,'2026-11-20')).id,3);
   } finally {sqlite.close();}
 });
 test('Unknown date limit is fifty per source across pages; known dates still use today',()=>{

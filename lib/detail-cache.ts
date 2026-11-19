@@ -25,6 +25,7 @@ export async function mapDetails<T, R>(
   const keys = [...new Set(entries.map(e => e.key).filter(Boolean))];
   const cached = new Map<string, CacheRow>();
   for (let start = 0; start < keys.length; start += 40) {
+    throwIfSyncCancelled();
     const batch = keys.slice(start, start + 40);
     const result = await scope.db.prepare(`SELECT posting_key,revision,payload,expires_at FROM crawl_details
       WHERE namespace=? AND expires_at>? AND posting_key IN (${batch.map(() => "?").join(",")})`)
@@ -44,6 +45,7 @@ export async function mapDetails<T, R>(
     if (metrics) metrics.cacheMisses++;
     return [{ ...entry, index }];
   });
+  throwIfSyncCancelled();
   if (!misses.length) return results;
   const loaded = bulkLoad && misses.length > 20
     ? await detailRequest.run(true, () => bulkLoad(misses.map(entry => entry.row)))
@@ -62,6 +64,9 @@ export async function mapDetails<T, R>(
       SET revision=excluded.revision,payload=excluded.payload,expires_at=excluded.expires_at`)
       .bind(scope.namespace, entry.key, entry.version, payload, entry.expires));
   }
-  for (let start = 0; start < writes.length; start += 30) await scope.db.batch(writes.slice(start, start + 30));
+  for (let start = 0; start < writes.length; start += 30) {
+    throwIfSyncCancelled();
+    await scope.db.batch(writes.slice(start, start + 30));
+  }
   return results;
 }

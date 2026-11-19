@@ -85,6 +85,13 @@ export const scrapeSourceProgress = sqliteTable("scrape_source_progress", {
   metricsJson: text("metrics_json"),
 }, (table) => [uniqueIndex("scrape_source_progress_run_source_idx").on(table.runId, table.sourceId)]);
 
+export const crawlProviderCooldowns = sqliteTable("crawl_provider_cooldowns", {
+  provider: text("provider").primaryKey(),
+  address: text("address").notNull(),
+  retryAfter: text("retry_after"),
+  retryAt: integer("retry_at").notNull(),
+});
+
 // Deliberately independent of jobs/sources: a saved application outlives crawl retention.
 export const applications = sqliteTable("applications", {
   id: integer("id").primaryKey({ autoIncrement: true }),
